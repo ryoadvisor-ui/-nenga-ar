@@ -3,69 +3,32 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>年賀状AR（QRトリガー）</title>
+<title>年賀状AR（QR追従）</title>
 
-<!-- QR認識ライブラリ -->
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
 <style>
-html,body{
-  margin:0;
-  height:100%;
-  overflow:hidden;
-  background:#000;
-  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
-}
-
-/* カメラ映像 */
+html,body{margin:0;height:100%;overflow:hidden;background:#000}
 #cam{
-  position:fixed;
-  inset:0;
-  width:100%;
-  height:100%;
+  position:fixed;inset:0;
+  width:100%;height:100%;
   object-fit:cover;
-  z-index:0;
 }
-
-/* 動く絵（動画） */
 #overlay{
   position:fixed;
-  inset:0;
-  width:100%;
-  height:100%;
-  object-fit:contain;
+  transform-origin:0 0;
   display:none;
-  z-index:2;
   pointer-events:none;
 }
-
-/* UI */
 #ui{
-  position:fixed;
-  inset:0;
-  z-index:10;
-  display:flex;
-  align-items:center;
-  justify-content:center;
+  position:fixed;inset:0;
+  display:flex;align-items:center;justify-content:center;
   background:rgba(0,0,0,.85);
+  z-index:10;
 }
 button{
-  padding:16px 24px;
-  font-size:18px;
-  font-weight:800;
-  border-radius:14px;
-  border:none;
-}
-#hint{
-  position:fixed;
-  bottom:12px;
-  left:0; right:0;
-  text-align:center;
-  color:#fff;
-  opacity:.9;
-  z-index:3;
-  font-size:14px;
-  display:none;
+  font-size:18px;font-weight:800;
+  padding:16px 24px;border-radius:14px;border:0;
 }
 canvas{display:none}
 </style>
@@ -74,80 +37,116 @@ canvas{display:none}
 <body>
 
 <video id="cam" autoplay muted playsinline></video>
-
-<!-- 年賀状の「動く絵」 -->
 <video id="overlay" src="./overlay.mp4" loop muted playsinline></video>
 
-<div id="ui">
-  <button id="start">開始</button>
-</div>
-
-<div id="hint">QRをカメラに映してください</div>
-
+<div id="ui"><button id="start">開始</button></div>
 <canvas id="cv"></canvas>
 
 <script>
 const cam = document.getElementById('cam');
-const overlay = document.getElementById('overlay');
-const ui = document.getElementById('ui');
-const hint = document.getElementById('hint');
-const cv = document.getElementById('cv');
-const ctx = cv.getContext('2d', { willReadFrequently:true });
+const ov  = document.getElementById('overlay');
+const ui  = document.getElementById('ui');
+const cv  = document.getElementById('cv');
+const ctx = cv.getContext('2d',{willReadFrequently:true});
 
-let running = false;
-let lastFound = 0;
+let running=false;
+let lastSeen=0;
+
+function mapPoint(p, srcW, srcH){
+  const vw=cam.videoWidth, vh=cam.videoHeight;
+  const sw=innerWidth, sh=innerHeight;
+  const videoAR=vw/vh, screenAR=sw/sh;
+  let drawW,drawH,offX,offY;
+  if(videoAR>screenAR){
+    drawH=sh; drawW=sh*videoAR;
+    offX=(sw-drawW)/2; offY=0;
+  }else{
+    drawW=sw; drawH=sw/videoAR;
+    offX=0; offY=(sh-drawH)/2;
+  }
+  return {
+    x: offX + (p.x/srcW)*drawW,
+    y: offY + (p.y/srcH)*drawH
+  };
+}
+
+// 4点射影 → CSS matrix3d
+function applyQuad(el, quad){
+  const w=el.videoWidth||200;
+  const h=el.videoHeight||200;
+  const from=[
+    {x:0,y:0},{x:w,y:0},{x:w,y:h},{x:0,y:h}
+  ];
+  const A=[],B=[];
+  for(let i=0;i<4;i++){
+    const x=from[i].x,y=from[i].y;
+    const X=quad[i].x,Y=quad[i].y;
+    A.push([x,y,1,0,0,0,-x*X,-y*X]); B.push(X);
+    A.push([0,0,0,x,y,1,-x*Y,-y*Y]); B.push(Y);
+  }
+  const M=A.map((r,i)=>r.concat([B[i]]));
+  for(let i=0;i<8;i++){
+    let m=i;
+    for(let j=i+1;j<8;j++) if(Math.abs(M[j][i])>Math.abs(M[m][i])) m=j;
+    [M[i],M[m]]=[M[m],M[i]];
+    const p=M[i][i]||1e-9;
+    for(let j=i;j<9;j++) M[i][j]/=p;
+    for(let j=0;j<8;j++) if(j!==i){
+      const f=M[j][i];
+      for(let k=i;k<9;k++) M[j][k]-=f*M[i][k];
+    }
+  }
+  const h0=M.map(r=>r[8]);
+  const a=h0[0],c=h0[1],e=h0[2];
+  const b=h0[3],d=h0[4],f=h0[5];
+  const g=h0[6],h_=h0[7];
+  el.style.transform=
+    `matrix3d(${a},${b},0,${g}, ${c},${d},0,${h_}, 0,0,1,0, ${e},${f},0,1)`;
+}
 
 async function start(){
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video:{facingMode:{ideal:'environment'}},
-    audio:false
+  const s=await navigator.mediaDevices.getUserMedia({
+    video:{facingMode:{ideal:'environment'}},audio:false
   });
-  cam.srcObject = stream;
+  cam.srcObject=s;
   await cam.play();
-
-  // iOS対策：ユーザー操作で触る
-  try{ await overlay.play(); }catch(e){}
-  overlay.pause();
-  overlay.currentTime = 0;
-
+  try{await ov.play()}catch(e){}
+  ov.pause(); ov.currentTime=0;
   ui.style.display='none';
-  hint.style.display='block';
-  running = true;
+  running=true;
   tick();
 }
 
 function tick(){
   if(!running) return;
-
   if(cam.videoWidth){
-    const w = 320;
-    const h = Math.round(cam.videoHeight * (w / cam.videoWidth));
-    cv.width = w;
-    cv.height = h;
-
+    const w=360;
+    const h=Math.round(cam.videoHeight*(w/cam.videoWidth));
+    cv.width=w; cv.height=h;
     ctx.drawImage(cam,0,0,w,h);
-    const img = ctx.getImageData(0,0,w,h);
-
-    const code = jsQR(img.data, img.width, img.height);
-
+    const img=ctx.getImageData(0,0,w,h);
+    const code=jsQR(img.data,w,h);
     if(code){
-      lastFound = performance.now();
-      if(overlay.style.display!=='block'){
-        overlay.style.display='block';
-        overlay.play();
-      }
-    }else{
-      if(performance.now() - lastFound > 500){
-        overlay.pause();
-        overlay.currentTime = 0;
-        overlay.style.display='none';
-      }
+      lastSeen=performance.now();
+      const loc=code.location;
+      const q=[
+        mapPoint(loc.topLeftCorner,w,h),
+        mapPoint(loc.topRightCorner,w,h),
+        mapPoint(loc.bottomRightCorner,w,h),
+        mapPoint(loc.bottomLeftCorner,w,h),
+      ];
+      ov.style.display='block';
+      applyQuad(ov,q);
+      if(ov.paused) ov.play();
+    }else if(performance.now()-lastSeen>400){
+      ov.pause(); ov.currentTime=0;
+      ov.style.display='none';
     }
   }
   requestAnimationFrame(tick);
 }
 
-document.getElementById('start').onclick = start;
+document.getElementById('start').onclick=start;
 </script>
 
 </body>
