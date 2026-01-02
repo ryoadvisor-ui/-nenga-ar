@@ -3,42 +3,39 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>年賀状AR（QRトリガー / 500×740 固定表示）</title>
+<title>年賀状AR（QR追従 + MP3 / 500×740）</title>
 
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
 <style>
 html,body{
-  margin:0; height:100%; overflow:hidden; background:#000;
+  margin:0;height:100%;overflow:hidden;background:#000;
   font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
 }
 
-/* カメラ（背景） */
+/* 背景カメラ */
 #cam{
-  position:fixed; inset:0;
-  width:100%; height:100%;
-  object-fit:cover;
-  background:#000;
+  position:fixed;inset:0;
+  width:100%;height:100%;
+  object-fit:cover;background:#000;
 }
 
-/* 中央に“年賀状比率”で固定表示する動画（歪みゼロ） */
+/* 合成動画（射影変換で追従） */
 #overlay{
   position:fixed;
-  left:50%;
-  top:48%;                          /* 少し上寄せ（好みで調整可） */
-  transform:translate(-50%,-50%);
-  height:min(72vh, 740px);          /* 高さ基準で安定 */
-  aspect-ratio: 500 / 740;          /* ★ 500×740 ぴったり */
+  left:0; top:0;
+  transform-origin:0 0;
   display:none;
   pointer-events:none;
-  filter: drop-shadow(0 6px 18px rgba(0,0,0,.45));
-  border-radius: 10px;
+  /* ほんの少しだけ視認性UP（不要なら消してOK） */
+  filter: drop-shadow(0 6px 18px rgba(0,0,0,.35));
+  border-radius: 8px;
 }
 
 /* 起動UI */
 #ui{
-  position:fixed; inset:0; z-index:10;
-  display:flex; align-items:center; justify-content:center;
+  position:fixed;inset:0;z-index:10;
+  display:flex;align-items:center;justify-content:center;
   background:rgba(0,0,0,.85);
 }
 #panel{
@@ -47,12 +44,10 @@ html,body{
 }
 button{
   width:100%;
-  font-size:18px; font-weight:900;
-  padding:16px 18px; border-radius:14px; border:0;
+  font-size:18px;font-weight:900;
+  padding:16px 18px;border-radius:14px;border:0;
 }
-#hint{
-  margin-top:10px; opacity:.85; font-size:13px; line-height:1.4;
-}
+#hint{ margin-top:10px; opacity:.85; font-size:13px; line-height:1.45; }
 #status{
   margin-top:10px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -64,7 +59,7 @@ button{
   white-space:pre-wrap;
 }
 
-canvas{ display:none }
+canvas{display:none}
 </style>
 </head>
 
@@ -72,19 +67,18 @@ canvas{ display:none }
 
 <video id="cam" autoplay muted playsinline></video>
 
-<!-- 中央表示動画（500×740） -->
+<!-- overlay.mp4 は 500×740 ぴったり -->
 <video id="overlay" src="./overlay.mp4" loop muted playsinline webkit-playsinline></video>
 
-<!-- 同時再生音声 -->
 <audio id="snd" src="./sound.mp3" preload="auto"></audio>
 
 <div id="ui">
   <div id="panel">
     <button id="start">開始（カメラ許可）</button>
     <div id="hint">
-      1) 「開始」を押す<br>
-      2) 年賀状の左下のQRを一度だけ映す<br>
-      3) 中央の動画（500×740）＋音声が再生されます
+      1) 開始 → カメラ許可<br>
+      2) 左下のQRを映す<br>
+      3) 年賀状を動かすと動画が追従します（途切れにくく調整済み）
     </div>
     <div id="status">state: idle</div>
   </div>
@@ -93,31 +87,146 @@ canvas{ display:none }
 <canvas id="cv"></canvas>
 
 <script>
+/* ==========================
+   ★ 調整パラメータ（ここだけ触ればOK）
+   QR(1×1) を基準に、動画を載せたい「年賀状中央の枠」を定義します。
+   QRの座標系：左上(0,0) → 右(+) 下(+)
+   ========================== */
+
+// overlay の横幅を「QR幅の何倍」にするか
+const OVERLAY_W_QR = 2.9;
+
+// overlay の位置（QR左上からのオフセット）
+// ※QRが左下にある前提で、中央へ行くように「右へ」「上へ(=マイナス)」
+const OFFSET_X_QR = 0.95;   // 右へ
+const OFFSET_Y_QR = -4.05;  // 上へ（マイナス）
+
+// “見失っても残す”時間（ミリ秒）…途切れ対策
+const HOLD_MS = 1300;
+
+// 追従のなめらかさ（0～1） 大きいほど追従早いがブレやすい
+const SMOOTH = 0.25;
+
+// QR検出の頻度（2～4推奨） 小さいほど安定するが重い
+const DETECT_EVERY = 2;
+
+// QR解析用の縮小幅（360～720） 大きいほど検出強いが重い
+const DETECT_SW = 520;
+
+// 特定のQRだけに反応させたいなら文字列を入れる（通常はnull）
+const EXPECT_QR_TEXT = null;
+
+/* ========================== */
+
 const cam = document.getElementById('cam');
 const ov  = document.getElementById('overlay');
 const snd = document.getElementById('snd');
 const ui  = document.getElementById('ui');
 const cv  = document.getElementById('cv');
-const ctx = cv.getContext('2d', { willReadFrequently:true });
+const ctx = cv.getContext('2d',{willReadFrequently:true});
 const statusEl = document.getElementById('status');
 
 let running=false;
-let scanning=false;
+let frame=0;
+
 let audioReady=false;
 let audioPlaying=false;
 
-/* QR検出の軽量設定 */
-const DETECT_EVERY = 2;   // 2～3 推奨
-let frame=0;
-
-/* 特定のQRだけ反応させたい場合は文字列を入れる
-   例: const EXPECT_QR_TEXT = "NENGA2026";
-   null のままなら「どのQRでもOK」 */
-const EXPECT_QR_TEXT = null;
+let lastSeen=0;
+let lastQuad=null; // 画面座標の4点（overlay用）
+let active=false;
 
 function log(t){ statusEl.textContent = t; }
+function lerp(a,b,t){ return a+(b-a)*t; }
+function smoothQuad(prev, next){
+  if(!prev) return next;
+  return prev.map((p,i)=>({
+    x: lerp(p.x, next[i].x, SMOOTH),
+    y: lerp(p.y, next[i].y, SMOOTH),
+  }));
+}
 
-/* 音声の事前アンロック */
+/* カメラ映像（object-fit:cover）上の座標変換：検出画像座標→画面座標 */
+function mapPointToScreen(p, sw, sh){
+  const vw=cam.videoWidth, vh=cam.videoHeight;
+  const W=innerWidth, H=innerHeight;
+  const arV=vw/vh, arS=W/H;
+  let dw,dh,ox,oy;
+  if(arV>arS){
+    dh=H; dw=H*arV; ox=(W-dw)/2; oy=0;
+  }else{
+    dw=W; dh=W/arV; ox=0; oy=(H-dh)/2;
+  }
+  return { x:ox+(p.x/sw)*dw, y:oy+(p.y/sh)*dh };
+}
+
+/* 8×8 連立を解いて homography（unit square→quad）を返す */
+function solveHomographyUnitToQuad(q){
+  // src: (0,0)(1,0)(1,1)(0,1) → q[0..3]
+  const src=[[0,0],[1,0],[1,1],[0,1]];
+  const A=[],B=[];
+  for(let i=0;i<4;i++){
+    const [x,y]=src[i], X=q[i].x, Y=q[i].y;
+    A.push([x,y,1,0,0,0,-x*X,-y*X]); B.push(X);
+    A.push([0,0,0,x,y,1,-x*Y,-y*Y]); B.push(Y);
+  }
+  const M=A.map((r,i)=>r.concat([B[i]])); // 8×9
+  for(let i=0;i<8;i++){
+    let m=i;
+    for(let j=i+1;j<8;j++) if(Math.abs(M[j][i])>Math.abs(M[m][i])) m=j;
+    [M[i],M[m]]=[M[m],M[i]];
+    const piv=M[i][i]||1e-9;
+    for(let k=i;k<9;k++) M[i][k]/=piv;
+    for(let j=0;j<8;j++) if(j!==i){
+      const f=M[j][i];
+      for(let k=i;k<9;k++) M[j][k]-=f*M[i][k];
+    }
+  }
+  const h=M.map(r=>r[8]); // a c e b d f g h
+  return { a:h[0], c:h[1], e:h[2], b:h[3], d:h[4], f:h[5], g:h[6], h:h[7] };
+}
+
+/* homography H で (x,y) を変換（unit square座標→screen） */
+function applyH(H, x, y){
+  const den = (H.g*x + H.h*y + 1) || 1e-9;
+  return {
+    x: (H.a*x + H.c*y + H.e) / den,
+    y: (H.b*x + H.d*y + H.f) / den
+  };
+}
+
+/* 4点（screen quad）に、要素を matrix3d で射影貼り付け */
+function applyQuadToElement(el, q){
+  const w = el.videoWidth || 500;
+  const h = el.videoHeight || 740;
+  const src=[[0,0],[w,0],[w,h],[0,h]];
+  const A=[],B=[];
+  for(let i=0;i<4;i++){
+    const [x,y]=src[i], X=q[i].x, Y=q[i].y;
+    A.push([x,y,1,0,0,0,-x*X,-y*X]); B.push(X);
+    A.push([0,0,0,x,y,1,-x*Y,-y*Y]); B.push(Y);
+  }
+  const M=A.map((r,i)=>r.concat([B[i]]));
+  for(let i=0;i<8;i++){
+    let m=i;
+    for(let j=i+1;j<8;j++) if(Math.abs(M[j][i])>Math.abs(M[m][i])) m=j;
+    [M[i],M[m]]=[M[m],M[i]];
+    const p=M[i][i]||1e-9;
+    for(let k=i;k<9;k++) M[i][k]/=p;
+    for(let j=0;j<8;j++) if(j!==i){
+      const f=M[j][i];
+      for(let k=i;k<9;k++) M[j][k]-=f*M[i][k];
+    }
+  }
+  const h0=M.map(r=>r[8]);
+  const [a,c,e,b,d,f,g,h_]=h0;
+  el.style.transform =
+    `matrix3d(${a},${b},0,${g},
+              ${c},${d},0,${h_},
+              0,0,1,0,
+              ${e},${f},0,1)`;
+}
+
 async function armAudio(){
   try{
     snd.currentTime=0;
@@ -128,45 +237,21 @@ async function armAudio(){
   }catch(e){}
 }
 
-/* 可能な限り高解像度を要求（端末依存） */
 async function getStreamBestEffort(){
-  const tries = [
+  const tries=[
     { video:{ facingMode:{ideal:'environment'}, width:{exact:3840}, height:{exact:2160} }, audio:false },
     { video:{ facingMode:{ideal:'environment'}, width:{min:1920}, height:{min:1080} }, audio:false },
     { video:{ facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1080} }, audio:false },
     { video:{ facingMode:{ideal:'environment'} }, audio:false },
   ];
-  for(const c of tries){
-    try{ return await navigator.mediaDevices.getUserMedia(c); }catch(e){}
-  }
+  for(const c of tries){ try{ return await navigator.mediaDevices.getUserMedia(c); }catch(e){} }
   return await navigator.mediaDevices.getUserMedia({ video:true, audio:false });
 }
 
-async function start(){
-  log("state: starting...");
-  const stream = await getStreamBestEffort();
-  cam.srcObject = stream;
-  await cam.play();
-
-  const track = stream.getVideoTracks()[0];
-  const s = track.getSettings?.() || {};
-  log(`state: camera ok (${s.width||"?"}x${s.height||"?"}) / scanning qr...`);
-
-  /* overlay は検出後に表示 */
-  try{ await ov.play(); }catch(_){}
-  ov.pause(); ov.currentTime=0; ov.style.display="none";
-
-  await armAudio();
-
-  ui.style.display="none";
-  running=true;
-  scanning=true;
-  requestAnimationFrame(tick);
-}
-
-function playAR(){
-  if(ov.style.display!=="block"){
-    ov.style.display="block";
+function onFound(){
+  if(!active){
+    active=true;
+    ov.style.display='block';
     ov.currentTime=0;
     ov.play().catch(()=>{});
   }
@@ -176,24 +261,97 @@ function playAR(){
   }
 }
 
+function onLost(){
+  // “追従途切れ”を減らすために即停止しない（HOLD_MSで制御）
+  // ここでは何もしない
+}
+
+function stopAll(){
+  active=false;
+  ov.pause(); ov.currentTime=0; ov.style.display='none';
+  if(audioPlaying){ snd.pause(); snd.currentTime=0; audioPlaying=false; }
+}
+
+async function start(){
+  log("state: starting...");
+  const stream = await getStreamBestEffort();
+  cam.srcObject = stream;
+  await cam.play();
+
+  const track=stream.getVideoTracks()[0];
+  const s=track.getSettings?.()||{};
+  log(`state: camera ok (${s.width||"?"}x${s.height||"?"}) / scanning...`);
+
+  // overlay をロードしておく
+  try{ await ov.play(); }catch(_){}
+  ov.pause(); ov.currentTime=0; ov.style.display='none';
+
+  await armAudio();
+
+  ui.style.display='none';
+  running=true;
+  requestAnimationFrame(tick);
+}
+
 function tick(){
   if(!running) return;
   frame++;
 
-  if(cam.videoWidth && scanning && frame % DETECT_EVERY === 0){
-    /* 検出は軽量化のため縮小（表示品質とは無関係） */
-    const sw = 420; // 鈍さ対策で少し大きめ
+  if(cam.videoWidth && frame % DETECT_EVERY === 0){
+    // QR検出は縮小して実行（表示品質とは別）
+    const sw = DETECT_SW;
     const sh = Math.round(cam.videoHeight * (sw / cam.videoWidth));
     cv.width=sw; cv.height=sh;
     ctx.drawImage(cam,0,0,sw,sh);
-    const img = ctx.getImageData(0,0,sw,sh);
+    const img=ctx.getImageData(0,0,sw,sh);
 
-    const code = jsQR(img.data, sw, sh, { inversionAttempts:"attemptBoth" });
+    const code = jsQR(img.data, sw, sh, { inversionAttempts:'attemptBoth' });
+
     if(code){
       if(EXPECT_QR_TEXT===null || (code.data||"").trim()===EXPECT_QR_TEXT){
-        playAR();
-        scanning=false; // 一度読めたら終了（安定）
+        const l=code.location;
+
+        // QR四隅（screen座標へ）
+        const qQR = [
+          mapPointToScreen(l.topLeftCorner,     sw, sh),
+          mapPointToScreen(l.topRightCorner,    sw, sh),
+          mapPointToScreen(l.bottomRightCorner, sw, sh),
+          mapPointToScreen(l.bottomLeftCorner,  sw, sh)
+        ];
+
+        // unit square → QR quad の homography
+        const H = solveHomographyUnitToQuad(qQR);
+
+        // overlay の枠を「QR座標系で」作って、screenへ変換
+        const ow = OVERLAY_W_QR;
+        const oh = ow * (740/500); // overlay比率(500×740)
+
+        const x0 = OFFSET_X_QR;
+        const y0 = OFFSET_Y_QR;
+
+        // overlay四隅（QR座標系）
+        const pTL = applyH(H, x0,     y0);
+        const pTR = applyH(H, x0+ow,  y0);
+        const pBR = applyH(H, x0+ow,  y0+oh);
+        const pBL = applyH(H, x0,     y0+oh);
+
+        const qOV = [pTL,pTR,pBR,pBL];
+
+        // なめらかに
+        lastQuad = smoothQuad(lastQuad, qOV);
+        lastSeen = performance.now();
+
+        // 反映
+        applyQuadToElement(ov, lastQuad);
+        onFound();
       }
+    }
+  }
+
+  // 見失い対策：一定時間は表示保持、超えたら停止
+  if(active){
+    if(performance.now() - lastSeen > HOLD_MS){
+      stopAll();
     }
   }
 
