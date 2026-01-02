@@ -3,78 +3,74 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>年賀AR（本番）</title>
+<title>年賀AR（黒画面修正版）</title>
 
 <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
 <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
 
 <style>
-html, body { margin:0; height:100%; overflow:hidden; background:#000; }
+  html, body { margin:0; height:100%; overflow:hidden; background:#000; }
 
-/* カメラ映像を「歪ませず」画面に収める */
-video.arjs-video {
-  position: fixed !important;
-  inset: 0 !important;
-  width: 100vw !important;
-  height: 100vh !important;
-  object-fit: contain !important;
-  background: #000 !important;
-  z-index: 0 !important;
-}
+  /* カメラ映像（video） */
+  video.arjs-video{
+    position:fixed !important;
+    inset:0 !important;
+    width:100vw !important;
+    height:100vh !important;
+    object-fit:contain !important;  /* 歪ませない */
+    background:#000 !important;
+    z-index:0 !important;
+  }
 
-canvas.a-canvas { z-index: 1 !important; }
+  /* ★ここが肝：canvasを透明にしてvideoを見せる */
+  canvas.a-canvas{
+    background: transparent !important;
+    z-index:1 !important;
+  }
 
-.ui {
-  position: fixed;
-  top: 0; left: 0; right: 0;
-  padding: 10px;
-  background: rgba(0,0,0,0.6);
-  color: #fff;
-  font-family: system-ui, sans-serif;
-  z-index: 10;
-}
+  .ui{
+    position:fixed; left:0; right:0; top:0;
+    padding:10px 12px;
+    background:rgba(0,0,0,0.6);
+    color:#fff;
+    font:14px/1.4 system-ui, sans-serif;
+    z-index:10;
+  }
 </style>
 </head>
 
 <body>
-<div class="ui">
-  カメラ許可 → Hiroマーカーにかざしてください
-</div>
+<div class="ui">カメラ許可 → Hiroマーカーにかざしてください（黒画面対策済み）</div>
 
 <a-scene
   embedded
   vr-mode-ui="enabled:false"
-  renderer="antialias:true; colorManagement:true;"
+  renderer="antialias:true; alpha:true;"        <!-- ★透明レンダリング -->
+  background="transparent:true"                 <!-- ★canvas背景を透明化 -->
   arjs="
     sourceType:webcam;
     facingMode:environment;
     debugUIEnabled:false;
-    sourceWidth:1280;
-    sourceHeight:720;
+    sourceWidth:1280; sourceHeight:720;
   "
 >
   <a-entity camera="fov:70"></a-entity>
 
   <a-assets>
-    <img id="img" src="./overlay.png?v=1">
+    <img id="img" src="./overlay.png?v=4">
   </a-assets>
 
   <a-marker preset="hiro">
     <a-plane
-      position="0 0 0"
       rotation="-90 0 0"
       width="1.4"
       height="1.4"
-      material="
-        src:#img;
-        transparent:true;
-        opacity:1;
-        side:double;
-      "
+      material="src:#img; transparent:true; opacity:1; side:double;"
     ></a-plane>
   </a-marker>
 
   <a-entity light="type:ambient; intensity:1"></a-entity>
 </a-scene>
+
 </body>
 </html>
