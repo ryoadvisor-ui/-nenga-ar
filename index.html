@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>年賀状AR（QR + MP3 + Zoom×1）</title>
+<title>年賀状AR（QR + MP3 / Max Resolution）</title>
 
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
@@ -15,7 +15,8 @@ html,body{
 #cam{
   position:fixed;inset:0;
   width:100%;height:100%;
-  object-fit:cover;background:#000;
+  object-fit:cover; /* 表示はこれが限界 */
+  background:#000;
 }
 #overlay{
   position:fixed;
@@ -32,6 +33,12 @@ button{
   font-size:18px;font-weight:900;
   padding:16px 24px;border-radius:14px;border:0;
 }
+#info{
+  position:fixed;left:8px;bottom:8px;
+  color:#0f0;font-size:12px;
+  background:rgba(0,0,0,.6);
+  padding:6px 8px;border-radius:6px;
+}
 canvas{display:none}
 </style>
 </head>
@@ -45,6 +52,7 @@ canvas{display:none}
 <div id="ui">
   <button id="start">開始</button>
 </div>
+<div id="info">res: -</div>
 
 <canvas id="cv"></canvas>
 
@@ -53,6 +61,7 @@ const cam = document.getElementById('cam');
 const ov  = document.getElementById('overlay');
 const snd = document.getElementById('snd');
 const ui  = document.getElementById('ui');
+const info= document.getElementById('info');
 const cv  = document.getElementById('cv');
 const ctx = cv.getContext('2d',{willReadFrequently:true});
 
@@ -63,11 +72,9 @@ let frame=0;
 let audioReady=false;
 let audioPlaying=false;
 
-// ===== 安定化設定 =====
 const HOLD_MS = 1500;
 const SMOOTH = 0.25;
 const DETECT_EVERY = 3;
-// ======================
 
 function lerp(a,b,t){return a+(b-a)*t;}
 function smoothQuad(p,n){
@@ -91,7 +98,6 @@ function mapPoint(p, sw, sh){
   return { x:ox+(p.x/sw)*dw, y:oy+(p.y/sh)*dh };
 }
 
-// 射影変換
 function applyQuad(el,q){
   const w=el.videoWidth||200,h=el.videoHeight||200;
   const src=[[0,0],[w,0],[w,h],[0,h]];
@@ -122,23 +128,9 @@ function applyQuad(el,q){
               ${e},${f},0,1)`;
 }
 
-async function forceZoom1(track){
-  try{
-    const caps = track.getCapabilities?.();
-    if(caps && caps.zoom){
-      await track.applyConstraints({
-        advanced:[{ zoom: 1.0 }]
-      });
-    }
-  }catch(e){
-    // 対応していない端末では無視
-  }
-}
-
 async function armAudio(){
   try{
     snd.currentTime=0;
-    snd.volume=1.0;
     await snd.play();
     snd.pause();
     snd.currentTime=0;
@@ -146,26 +138,36 @@ async function armAudio(){
   }catch(e){}
 }
 
+async function getStreamMax(){
+  const tries = [
+    // 4K exact
+    { video:{ facingMode:{ideal:'environment'}, width:{exact:3840}, height:{exact:2160} }, audio:false },
+    // 1080p min
+    { video:{ facingMode:{ideal:'environment'}, width:{min:1920}, height:{min:1080} }, audio:false },
+    // 1080p ideal
+    { video:{ facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1080} }, audio:false },
+  ];
+  for(const c of tries){
+    try{
+      return await navigator.mediaDevices.getUserMedia(c);
+    }catch(e){}
+  }
+  // 最後の保険
+  return await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ideal:'environment'} }, audio:false });
+}
+
 async function start(){
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video:{
-      facingMode:{ideal:'environment'},
-      zoom:1
-    },
-    audio:false
-  });
+  const stream = await getStreamMax();
   cam.srcObject = stream;
   await cam.play();
 
-  // ★ズーム×1を強制
   const track = stream.getVideoTracks()[0];
-  await forceZoom1(track);
+  const s = track.getSettings();
+  info.textContent = `res: ${s.width} x ${s.height}`;
 
-  // 動画（見た目）
   try{ await ov.play(); }catch(_){}
   ov.pause(); ov.currentTime=0;
 
-  // ★MP3 許可取り
   await armAudio();
 
   ui.style.display='none';
@@ -183,7 +185,6 @@ function onFound(){
     snd.play().then(()=>audioPlaying=true).catch(()=>{});
   }
 }
-
 function onLost(){
   ov.pause(); ov.currentTime=0; ov.style.display='none';
   if(audioPlaying){
@@ -201,11 +202,7 @@ function tick(){
     cv.width=sw; cv.height=sh;
     ctx.drawImage(cam,0,0,sw,sh);
     const img=ctx.getImageData(0,0,sw,sh);
-
-    const code = jsQR(img.data, sw, sh, {
-      inversionAttempts:'attemptBoth'
-    });
-
+    const code = jsQR(img.data, sw, sh, { inversionAttempts:'attemptBoth' });
     if(code){
       const l=code.location;
       const q=[
