@@ -2,73 +2,79 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>QR 年賀状 AR（非Canvas版）</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Camera Only Test</title>
 
 <style>
 html,body{
-  margin:0; background:#000; height:100%; overflow:hidden;
+  margin:0;
+  height:100%;
+  background:#000;
+  color:#fff;
+  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
 }
-#cam{
-  position:fixed;
-  inset:0;
-  object-fit:contain; /* ←ここ超重要 */
+#wrap{
+  height:100%;
+  display:flex;
+  flex-direction:column;
 }
-#overlay{
-  position:fixed;
-  inset:0;
-  pointer-events:none;
-  display:none;
+#bar{
+  padding:10px;
+  background:rgba(0,0,0,.6);
 }
-#start{
-  position:fixed;
-  z-index:10;
-  left:50%; top:50%;
-  transform:translate(-50%,-50%);
-  padding:16px 24px;
-  font-size:18px;
+#videoBox{
+  flex:1;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+video{
+  max-width:100%;
+  max-height:100%;
+  background:#000;
+}
+button{
+  padding:12px;
+  font-size:16px;
+  margin-top:8px;
 }
 </style>
 </head>
 
 <body>
-
-<button id="start">開始</button>
-
-<video id="cam" playsinline muted></video>
-
-<video id="overlay" src="./overlay.mp4" loop muted playsinline></video>
-<audio id="bgm" src="./sound.mp3" loop></audio>
-
-<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+<div id="wrap">
+  <div id="bar">
+    <div id="msg">開始を押してください</div>
+    <button id="start">開始</button>
+  </div>
+  <div id="videoBox">
+    <video id="v" playsinline muted></video>
+  </div>
+</div>
 
 <script>
-const cam = document.getElementById('cam');
-const overlay = document.getElementById('overlay');
-const bgm = document.getElementById('bgm');
+const v = document.getElementById('v');
+const msg = document.getElementById('msg');
 const btn = document.getElementById('start');
+let stream=null;
 
 btn.onclick = async ()=>{
-  btn.style.display='none';
-
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video:{
-      facingMode:{ideal:'environment'},
-      width:{ideal:1280},
-      height:{ideal:720}
-    },
-    audio:false
-  });
-
-  cam.srcObject = stream;
-  await cam.play();
-
-  overlay.play();
-  bgm.play();
-
-  overlay.style.display='block';
+  try{
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{
+        facingMode:{ideal:'environment'},
+        width:{ideal:1280},
+        height:{ideal:720}
+      },
+      audio:false
+    });
+    v.srcObject = stream;
+    await v.play();
+    msg.textContent = '映像が出ています';
+  }catch(e){
+    msg.textContent = 'ERROR: ' + e.name;
+  }
 };
 </script>
-
 </body>
 </html>
