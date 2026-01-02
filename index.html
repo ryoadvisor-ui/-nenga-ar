@@ -1,76 +1,200 @@
 <!doctype html>
 <html lang="ja">
 <head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>年賀AR（黒画面修正版）</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>年賀状AR（MindAR・無料）</title>
 
-<script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-<script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+  <!-- A-Frame + MindAR（無料CDN） -->
+  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 
-<style>
-  html, body { margin:0; height:100%; overflow:hidden; background:#000; }
+  <style>
+    html, body { margin:0; height:100%; overflow:hidden; background:#000; }
 
-  /* カメラ映像（video） */
-  video.arjs-video{
-    position:fixed !important;
-    inset:0 !important;
-    width:100vw !important;
-    height:100vh !important;
-    object-fit:contain !important;  /* 歪ませない */
-    background:#000 !important;
-    z-index:0 !important;
-  }
+    /* iPhone対策：ユーザー操作で開始 */
+    #ui {
+      position: fixed; inset: 0;
+      display:flex; align-items:center; justify-content:center;
+      flex-direction:column;
+      gap: 12px;
+      background: rgba(0,0,0,0.75);
+      color:#fff;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      z-index: 9999;
+      text-align:center;
+      padding: 20px;
+    }
+    #title { font-size:18px; font-weight:700; }
+    #hint { opacity:0.9; font-size: 14px; line-height:1.6; }
+    #msg  { opacity:0.9; font-size: 13px; line-height:1.6; min-height: 2.2em; }
 
-  /* ★ここが肝：canvasを透明にしてvideoを見せる */
-  canvas.a-canvas{
-    background: transparent !important;
-    z-index:1 !important;
-  }
+    button {
+      padding: 12px 16px;
+      border: 0;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 700;
+    }
 
-  .ui{
-    position:fixed; left:0; right:0; top:0;
-    padding:10px 12px;
-    background:rgba(0,0,0,0.6);
-    color:#fff;
-    font:14px/1.4 system-ui, sans-serif;
-    z-index:10;
-  }
-</style>
+    /* 画面下の小さなステータス表示（デバッグ用、不要なら消してOK） */
+    #statusBar {
+      position: fixed;
+      left: 0; right: 0; bottom: 0;
+      padding: 8px 10px;
+      background: rgba(0,0,0,0.45);
+      color: #fff;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      font-size: 12px;
+      z-index: 5;
+      display:flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .pill {
+      display:inline-block;
+      padding: 2px 8px;
+      border: 1px solid rgba(255,255,255,0.35);
+      border-radius: 999px;
+      opacity: 0.9;
+    }
+  </style>
 </head>
 
 <body>
-<div class="ui">カメラ許可 → Hiroマーカーにかざしてください（黒画面対策済み）</div>
+  <!-- 開始UI（iOS/Safariでカメラ&動画を安定させる） -->
+  <div id="ui">
+    <div id="title">年賀状ARを開始</div>
+    <div id="hint">
+      ①「開始」を押す → ②カメラ許可 → ③年賀状にかざす<br>
+      ※動く絵（動画）が年賀状の上に重なります
+    </div>
+    <button id="startBtn">開始</button>
+    <div id="msg"></div>
+  </div>
 
-<a-scene
-  embedded
-  vr-mode-ui="enabled:false"
-  renderer="antialias:true; alpha:true;"        <!-- ★透明レンダリング -->
-  background="transparent:true"                 <!-- ★canvas背景を透明化 -->
-  arjs="
-    sourceType:webcam;
-    facingMode:environment;
-    debugUIEnabled:false;
-    sourceWidth:1280; sourceHeight:720;
-  "
->
-  <a-entity camera="fov:70"></a-entity>
+  <!-- 任意：ステータス -->
+  <div id="statusBar">
+    <span class="pill" id="st">state: idle</span>
+    <span class="pill" id="tf">target: -</span>
+    <span class="pill" id="er">error: -</span>
+  </div>
 
-  <a-assets>
-    <img id="img" src="./overlay.png?v=4">
-  </a-assets>
+  <!-- MindAR Scene -->
+  <a-scene
+    mindar-image="imageTargetSrc: ./targets.mind; autoStart: false; uiScanning: false; uiLoading: false;"
+    color-space="sRGB"
+    renderer="colorManagement: true, physicallyCorrectLights: true"
+    vr-mode-ui="enabled: false"
+    device-orientation-permission-ui="enabled: false"
+  >
+    <a-assets>
+      <!-- 動かしたい絵：動画（推奨） -->
+      <video
+        id="ov"
+        src="./overlay.mp4"
+        loop
+        muted
+        playsinline
+        webkit-playsinline
+        crossorigin="anonymous"
+      ></video>
+    </a-assets>
 
-  <a-marker preset="hiro">
-    <a-plane
-      rotation="-90 0 0"
-      width="1.4"
-      height="1.4"
-      material="src:#img; transparent:true; opacity:1; side:double;"
-    ></a-plane>
-  </a-marker>
+    <!-- 画像ターゲット：targets.mindに1枚だけ入れたなら targetIndex:0 -->
+    <a-entity mindar-image-target="targetIndex: 0">
 
-  <a-entity light="type:ambient; intensity:1"></a-entity>
-</a-scene>
+      <!-- 年賀状の上に重ねる “動画の板” -->
+      <!-- ★ ここでサイズ・位置を調整します -->
+      <a-video
+        src="#ov"
+        width="1.0"
+        height="0.56"
+        position="0 0 0"
+        rotation="0 0 0"
+      ></a-video>
 
+    </a-entity>
+
+    <!-- カメラ（look-controls無効で変な回転を避ける） -->
+    <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
+  </a-scene>
+
+  <script>
+    const ui = document.getElementById('ui');
+    const msg = document.getElementById('msg');
+    const startBtn = document.getElementById('startBtn');
+
+    const st = document.getElementById('st');
+    const tf = document.getElementById('tf');
+    const er = document.getElementById('er');
+
+    const scene = document.querySelector('a-scene');
+    const overlayVideo = document.getElementById('ov');
+
+    function setMsg(t){ msg.textContent = t || ''; }
+    function setState(t){ st.textContent = 'state: ' + t; }
+    function setTarget(t){ tf.textContent = 'target: ' + t; }
+    function setErr(t){ er.textContent = 'error: ' + t; }
+
+    // iPhone/Safari対策：
+    // - ユーザー操作(クリック)中に video.play() と mindar.start() を実行する
+    startBtn.addEventListener('click', async () => {
+      try {
+        setErr('-');
+        setState('starting');
+        setMsg('起動中…（カメラ許可が出たら許可してください）');
+
+        // ユーザー操作中に一度再生を試す（失敗してもOK）
+        try { await overlayVideo.play(); } catch (_) {}
+
+        const mindar = scene.components['mindar-image'];
+        await mindar.start();
+
+        // 起動後にUIを消す
+        ui.style.display = 'none';
+        setState('running');
+        setMsg('');
+
+      } catch (e) {
+        setState('failed');
+        setErr(e?.name || String(e));
+        setMsg('起動失敗：' + (e?.name || e));
+      }
+    });
+
+    // 認識イベント（成功確認用）
+    scene.addEventListener('targetFound', async () => {
+      setTarget('FOUND');
+      // 念押しで再生（iPhoneで重要）
+      try { await overlayVideo.play(); } catch (_) {}
+    });
+
+    scene.addEventListener('targetLost', () => {
+      setTarget('LOST');
+      // 外れたら止めたいなら有効化
+      // overlayVideo.pause();
+    });
+
+    // ページ離脱でカメラ停止（保険）
+    window.addEventListener('pagehide', () => {
+      try {
+        const mindar = scene.components['mindar-image'];
+        mindar?.stop();
+      } catch (_) {}
+    });
+
+    // もし targets.mind / overlay.mp4 が見つからない等のエラーを早めに出す
+    overlayVideo.addEventListener('error', () => {
+      setErr('overlay.mp4 not found / cannot load');
+    });
+
+    // 初期表示
+    setState('idle');
+    setTarget('-');
+    setErr('-');
+    setMsg('「開始」を押してください（ユーザー操作が必要）');
+  </script>
 </body>
 </html>
