@@ -5,102 +5,103 @@
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
 <title>年賀状AR</title>
 
-<!-- MindAR Core -->
-<script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image.prod.js"></script>
+<!-- MindAR Core (Three.js版) -->
+<script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-three.prod.js"></script>
 
 <style>
-html,body{
-  margin:0;
-  height:100%;
-  overflow:hidden;
-  background:#000;
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #000;
 }
 
-/* カメラ背景 */
-#camera{
-  position:fixed;
-  inset:0;
-  object-fit:cover;
-  z-index:0;
+/* MindARが生成するcanvasを全画面に */
+#container {
+  position: fixed;
+  inset: 0;
 }
 
-/* 動く動画（年賀状） */
-#overlay{
-  position:fixed;
-  inset:0;
-  width:100%;
-  height:100%;
-  object-fit:contain;
-  display:none;
-  z-index:1;
+/* 年賀状動画 */
+#overlay {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: none;
+  z-index: 2;
 }
 
 /* 開始UI */
-#ui{
-  position:fixed;
-  inset:0;
-  z-index:2;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-  background:rgba(0,0,0,.85);
+#ui {
+  position: fixed;
+  inset: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,.85);
 }
-button{
-  font-size:18px;
-  font-weight:800;
-  padding:16px 24px;
-  border-radius:14px;
-  border:none;
+button {
+  font-size: 18px;
+  font-weight: 800;
+  padding: 16px 24px;
+  border-radius: 14px;
+  border: none;
 }
 </style>
 </head>
 
 <body>
 
-<!-- カメラ -->
-<video id="camera" autoplay muted playsinline webkit-playsinline></video>
+<div id="container"></div>
 
-<!-- 年賀状動画 -->
-<video id="overlay" src="./overlay.mp4" loop muted playsinline webkit-playsinline></video>
+<video id="overlay"
+  src="./overlay.mp4"
+  loop
+  muted
+  playsinline
+  webkit-playsinline>
+</video>
 
-<!-- 開始ボタン -->
 <div id="ui">
   <button id="start">はじめる</button>
 </div>
 
 <script>
-const camera = document.getElementById("camera");
+const container = document.getElementById("container");
 const overlay = document.getElementById("overlay");
 const ui = document.getElementById("ui");
 
 document.getElementById("start").onclick = async () => {
 
-  /* ① カメラ起動（絶対映る） */
-  const stream = await navigator.mediaDevices.getUserMedia({
-    video:{ facingMode:{ ideal:"environment" } },
-    audio:false
-  });
-  camera.srcObject = stream;
-
-  /* ② MindAR（画像認識だけ） */
-  const mindar = new window.MINDAR.IMAGE.MindAR({
-    container: document.body,
+  /* MindAR Three.js Core */
+  const mindarThree = new window.MINDAR.IMAGE.MindARThree({
+    container: container,
     imageTargetSrc: "./targets.mind"
   });
 
-  await mindar.start();
+  const { renderer, scene, camera } = mindarThree;
 
-  /* ③ 年賀状を見つけたら動画表示 */
-  mindar.on("targetFound", () => {
+  /* ターゲット0 */
+  const anchor = mindarThree.addAnchor(0);
+
+  anchor.onTargetFound = () => {
     overlay.style.display = "block";
     overlay.play();
-  });
+  };
 
-  /* 見失ったら止める */
-  mindar.on("targetLost", () => {
+  anchor.onTargetLost = () => {
     overlay.pause();
     overlay.currentTime = 0;
     overlay.style.display = "none";
+  };
+
+  await mindarThree.start();
+
+  renderer.setAnimationLoop(() => {
+    renderer.render(scene, camera);
   });
 
   ui.style.display = "none";
