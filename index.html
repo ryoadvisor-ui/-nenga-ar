@@ -146,4 +146,111 @@
       }catch(e){ add('overlay.mp4: fetch ERROR ' + (e?.message||e)); }
     }
 
-    // ★ ここが肝：ど
+    // ★ ここが肝：どの環境でも start() を掴む
+    function resolveStarter(){
+      // 1) system（Androidで多い）
+      const sys = scene.systems && scene.systems["mindar-image-system"];
+      if (sys && typeof sys.start === 'function') return { mode:'system', start: () => sys.start() };
+
+      // 2) component（環境によってはこっち）
+      const comp = scene.components && scene.components["mindar-image"];
+      if (comp && typeof comp.start === 'function') return { mode:'component', start: () => comp.start() };
+
+      // 3) 念のため属性から（万一遅延してる場合に再解決できるよう）
+      return null;
+    }
+
+    function enableButton(modeText){
+      btn.disabled = false;
+      if (modeText) modeEl.textContent = 'mode: ' + modeText;
+      setS('ready');
+      add('start button enabled');
+    }
+
+    async function doStart(){
+      setS('starting');
+      add('start tapped');
+
+      killVRButtons();
+
+      // iOS対策：overlayをユーザー操作で触る
+      try { await ov.play(); add('overlay.play(): OK'); }
+      catch(e){ add('overlay.play(): NG ' + (e?.message||e)); }
+
+      // 開始押下時に改めて start() を探す（押せない問題の根絶）
+      const starter = resolveStarter();
+      if (!starter) {
+        add('ERROR: MindAR start() not ready at tap');
+        add('debug systems=' + Object.keys(scene.systems||{}).join(','));
+        add('debug components=' + Object.keys(scene.components||{}).join(','));
+        setS('failed');
+        return;
+      }
+
+      modeEl.textContent = 'mode: ' + starter.mode;
+      add('mindar.start() calling...');
+      await starter.start();
+      add('mindar.start(): OK');
+      setS('running');
+
+      // 診断中はUIを残す（黒になってもログが見える）
+      add('NOTE: If screen becomes black, keep UI and send this log.');
+    }
+
+    // ---- boot ----
+    window.addEventListener('load', async ()=>{
+      setInterval(killVRButtons, 400);
+
+      env.textContent = 'env: ' + (inAppUA() ? 'in-app-webview' : 'browser/Other');
+      add('boot...');
+      add('secureContext: ' + window.isSecureContext);
+      add('mediaDevices: ' + !!navigator.mediaDevices);
+      add('getUserMedia: ' + !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
+      add('WebGL: ' + (webglOK() ? 'OK' : 'NG'));
+      add('AFRAME: ' + (window.AFRAME ? 'OK' : 'NG'));
+      add('MINDAR: ' + (window.MINDAR ? 'OK' : 'NG'));
+      await fetchCheck();
+
+      // scene loaded 待ち
+      const onSceneReady = ()=>{
+        add('scene.loaded fired (hasLoaded=' + scene.hasLoaded + ')');
+        setS('checking');
+
+        // まずは普通に start() を待つ
+        const startedAt = Date.now();
+        const timer = setInterval(()=>{
+          const starter = resolveStarter();
+          if (starter) {
+            clearInterval(timer);
+            add('mindar: ' + starter.mode + '.start detected');
+            enableButton(starter.mode);
+          } else if (Date.now() - startedAt > 1500) {
+            // ★ここが“押せない問題の根絶”：
+            // start検出できなくても、押下時に再解決するのでボタンは解放する
+            clearInterval(timer);
+            add('mindar.start not detected yet → force enable button (tap will re-resolve)');
+            enableButton('unknown');
+          }
+        }, 100);
+
+        // 念のため：2.5秒で必ず解放（端末差吸収）
+        setTimeout(()=>{
+          if (btn.disabled) {
+            add('force enable by timeout');
+            enableButton('timeout');
+          }
+        }, 2500);
+      };
+
+      if (scene.hasLoaded) onSceneReady();
+      else scene.addEventListener('loaded', onSceneReady, { once:true });
+
+      btn.addEventListener('click', ()=>{ doStart().catch(e=>{
+        add('ERROR: ' + (e?.message||e));
+        if (e?.stack) add(e.stack);
+        setS('failed');
+      })});
+    });
+  </script>
+</body>
+</html>
