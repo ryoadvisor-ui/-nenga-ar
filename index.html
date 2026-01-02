@@ -5,196 +5,153 @@
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>年賀状AR（MindAR・無料）</title>
 
-  <!-- A-Frame + MindAR（無料CDN） -->
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 
   <style>
     html, body { margin:0; height:100%; overflow:hidden; background:#000; }
-
-    /* iPhone対策：ユーザー操作で開始 */
-    #ui {
-      position: fixed; inset: 0;
+    #ui{
+      position:fixed; inset:0; z-index:9999;
       display:flex; align-items:center; justify-content:center;
-      flex-direction:column;
-      gap: 12px;
-      background: rgba(0,0,0,0.75);
-      color:#fff;
-      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-      z-index: 9999;
-      text-align:center;
-      padding: 20px;
+      flex-direction:column; gap:12px;
+      background:rgba(0,0,0,.75); color:#fff;
+      font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+      padding:20px; text-align:center;
     }
-    #title { font-size:18px; font-weight:700; }
-    #hint { opacity:0.9; font-size: 14px; line-height:1.6; }
-    #msg  { opacity:0.9; font-size: 13px; line-height:1.6; min-height: 2.2em; }
-
-    button {
-      padding: 12px 16px;
-      border: 0;
-      border-radius: 12px;
-      font-size: 16px;
-      font-weight: 700;
-    }
-
-    /* 画面下の小さなステータス表示（デバッグ用、不要なら消してOK） */
-    #statusBar {
-      position: fixed;
-      left: 0; right: 0; bottom: 0;
-      padding: 8px 10px;
-      background: rgba(0,0,0,0.45);
-      color: #fff;
-      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-      font-size: 12px;
-      z-index: 5;
-      display:flex;
-      gap: 10px;
-      flex-wrap: wrap;
-      align-items: center;
-    }
-    .pill {
-      display:inline-block;
-      padding: 2px 8px;
-      border: 1px solid rgba(255,255,255,0.35);
-      border-radius: 999px;
-      opacity: 0.9;
-    }
+    button{ padding:12px 16px; border:0; border-radius:12px; font-size:16px; font-weight:700; }
+    #msg{ font-size:13px; opacity:.9; line-height:1.6; min-height:3.2em; }
+    .pill{ display:inline-block; padding:2px 8px; border:1px solid rgba(255,255,255,.35); border-radius:999px; font-size:12px; opacity:.9; }
+    #bar{ display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
   </style>
 </head>
 
 <body>
-  <!-- 開始UI（iOS/Safariでカメラ&動画を安定させる） -->
   <div id="ui">
-    <div id="title">年賀状ARを開始</div>
-    <div id="hint">
-      ①「開始」を押す → ②カメラ許可 → ③年賀状にかざす<br>
-      ※動く絵（動画）が年賀状の上に重なります
+    <div style="font-size:18px;font-weight:700;">年賀状ARを開始</div>
+    <div id="bar">
+      <span class="pill" id="st">state: boot</span>
+      <span class="pill" id="er">error: -</span>
     </div>
-    <button id="startBtn">開始</button>
-    <div id="msg"></div>
+    <div id="msg">読み込み中…（数秒待ってください）</div>
+    <button id="startBtn" disabled>開始</button>
+    <div style="font-size:12px;opacity:.75;line-height:1.5;">
+      ①開始 → ②カメラ許可 → ③年賀状にかざす<br>
+      ※iPhoneは開始ボタン必須
+    </div>
   </div>
 
-  <!-- 任意：ステータス -->
-  <div id="statusBar">
-    <span class="pill" id="st">state: idle</span>
-    <span class="pill" id="tf">target: -</span>
-    <span class="pill" id="er">error: -</span>
-  </div>
-
-  <!-- MindAR Scene -->
   <a-scene
     mindar-image="imageTargetSrc: ./targets.mind; autoStart: false; uiScanning: false; uiLoading: false;"
-    color-space="sRGB"
-    renderer="colorManagement: true, physicallyCorrectLights: true"
+    renderer="colorManagement: true"
     vr-mode-ui="enabled: false"
     device-orientation-permission-ui="enabled: false"
   >
     <a-assets>
-      <!-- 動かしたい絵：動画（推奨） -->
-      <video
-        id="ov"
-        src="./overlay.mp4"
-        loop
-        muted
-        playsinline
-        webkit-playsinline
-        crossorigin="anonymous"
-      ></video>
+      <video id="ov" src="./overlay.mp4" loop muted playsinline webkit-playsinline crossorigin="anonymous"></video>
     </a-assets>
 
-    <!-- 画像ターゲット：targets.mindに1枚だけ入れたなら targetIndex:0 -->
     <a-entity mindar-image-target="targetIndex: 0">
-
-      <!-- 年賀状の上に重ねる “動画の板” -->
-      <!-- ★ ここでサイズ・位置を調整します -->
-      <a-video
-        src="#ov"
-        width="1.0"
-        height="0.56"
-        position="0 0 0"
-        rotation="0 0 0"
-      ></a-video>
-
+      <a-video src="#ov" width="1.0" height="0.56" position="0 0 0"></a-video>
     </a-entity>
 
-    <!-- カメラ（look-controls無効で変な回転を避ける） -->
     <a-camera position="0 0 0" look-controls="enabled: false"></a-camera>
   </a-scene>
 
   <script>
     const ui = document.getElementById('ui');
     const msg = document.getElementById('msg');
+    const st  = document.getElementById('st');
+    const er  = document.getElementById('er');
     const startBtn = document.getElementById('startBtn');
-
-    const st = document.getElementById('st');
-    const tf = document.getElementById('tf');
-    const er = document.getElementById('er');
 
     const scene = document.querySelector('a-scene');
     const overlayVideo = document.getElementById('ov');
 
-    function setMsg(t){ msg.textContent = t || ''; }
     function setState(t){ st.textContent = 'state: ' + t; }
-    function setTarget(t){ tf.textContent = 'target: ' + t; }
     function setErr(t){ er.textContent = 'error: ' + t; }
+    function setMsg(t){ msg.textContent = t; }
 
-    // iPhone/Safari対策：
-    // - ユーザー操作(クリック)中に video.play() と mindar.start() を実行する
+    async function exists(url){
+      try{
+        const r = await fetch(url, { cache: 'no-store' });
+        return r.ok;
+      }catch(_){
+        return false;
+      }
+    }
+
+    // 1) ページ読み込み直後：ファイル存在チェック→MindARの準備完了待ち
+    window.addEventListener('load', async () => {
+      setState('checking');
+
+      // ファイル存在確認（ここで原因を潰す）
+      const okMind = await exists('./targets.mind');
+      const okMp4  = await exists('./overlay.mp4');
+
+      if (!okMind) {
+        setState('blocked');
+        setErr('targets.mind not found');
+        setMsg('targets.mind が見つかりません（index.htmlと同じ階層に置いてください）');
+        return;
+      }
+      if (!okMp4) {
+        setState('blocked');
+        setErr('overlay.mp4 not found');
+        setMsg('overlay.mp4 が見つかりません（index.htmlと同じ階層に置いてください）');
+        return;
+      }
+
+      // A-Frameの初期化が終わるまで待つ（ここがTypeError対策の本丸）
+      scene.addEventListener('loaded', () => {
+        // mindar-image コンポーネントが載るまで少し待つ
+        const waitMindar = setInterval(() => {
+          const mindar = scene.components && scene.components['mindar-image'];
+          if (mindar && typeof mindar.start === 'function') {
+            clearInterval(waitMindar);
+            setState('ready');
+            setErr('-');
+            setMsg('準備OK。「開始」を押してください。');
+            startBtn.disabled = false;
+          }
+        }, 100);
+        setTimeout(() => {
+          if (startBtn.disabled) {
+            setState('timeout');
+            setErr('mindar init timeout');
+            setMsg('MindARの初期化に失敗しました。通信制限/読み込みブロックの可能性があります。');
+          }
+        }, 8000);
+      });
+    });
+
+    // 2) 開始ボタン：ユーザー操作の中で start する
     startBtn.addEventListener('click', async () => {
-      try {
-        setErr('-');
+      try{
         setState('starting');
+        setErr('-');
         setMsg('起動中…（カメラ許可が出たら許可してください）');
 
-        // ユーザー操作中に一度再生を試す（失敗してもOK）
-        try { await overlayVideo.play(); } catch (_) {}
+        // iOS対策：ユーザー操作中に動画再生トライ（失敗してもOK）
+        try { await overlayVideo.play(); } catch(_){}
 
         const mindar = scene.components['mindar-image'];
         await mindar.start();
 
-        // 起動後にUIを消す
+        // 起動成功
         ui.style.display = 'none';
         setState('running');
-        setMsg('');
 
-      } catch (e) {
+      }catch(e){
         setState('failed');
         setErr(e?.name || String(e));
         setMsg('起動失敗：' + (e?.name || e));
       }
     });
 
-    // 認識イベント（成功確認用）
+    // 認識イベント（成功確認）
     scene.addEventListener('targetFound', async () => {
-      setTarget('FOUND');
-      // 念押しで再生（iPhoneで重要）
-      try { await overlayVideo.play(); } catch (_) {}
+      try { await overlayVideo.play(); } catch(_){}
     });
-
-    scene.addEventListener('targetLost', () => {
-      setTarget('LOST');
-      // 外れたら止めたいなら有効化
-      // overlayVideo.pause();
-    });
-
-    // ページ離脱でカメラ停止（保険）
-    window.addEventListener('pagehide', () => {
-      try {
-        const mindar = scene.components['mindar-image'];
-        mindar?.stop();
-      } catch (_) {}
-    });
-
-    // もし targets.mind / overlay.mp4 が見つからない等のエラーを早めに出す
-    overlayVideo.addEventListener('error', () => {
-      setErr('overlay.mp4 not found / cannot load');
-    });
-
-    // 初期表示
-    setState('idle');
-    setTarget('-');
-    setErr('-');
-    setMsg('「開始」を押してください（ユーザー操作が必要）');
   </script>
 </body>
 </html>
