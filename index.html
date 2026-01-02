@@ -3,16 +3,19 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>年賀状AR（安定追従）</title>
+<title>年賀状AR（QR + MP3 + Zoom×1）</title>
 
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
 <style>
-html,body{margin:0;height:100%;overflow:hidden;background:#000}
+html,body{
+  margin:0;height:100%;overflow:hidden;background:#000;
+  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
+}
 #cam{
   position:fixed;inset:0;
   width:100%;height:100%;
-  object-fit:cover;
+  object-fit:cover;background:#000;
 }
 #overlay{
   position:fixed;
@@ -21,13 +24,12 @@ html,body{margin:0;height:100%;overflow:hidden;background:#000}
   pointer-events:none;
 }
 #ui{
-  position:fixed;inset:0;
+  position:fixed;inset:0;z-index:10;
   display:flex;align-items:center;justify-content:center;
   background:rgba(0,0,0,.85);
-  z-index:10;
 }
 button{
-  font-size:18px;font-weight:800;
+  font-size:18px;font-weight:900;
   padding:16px 24px;border-radius:14px;border:0;
 }
 canvas{display:none}
@@ -38,33 +40,41 @@ canvas{display:none}
 
 <video id="cam" autoplay muted playsinline></video>
 <video id="overlay" src="./overlay.mp4" loop muted playsinline></video>
-<div id="ui"><button id="start">開始</button></div>
+<audio id="snd" src="./sound.mp3" preload="auto"></audio>
+
+<div id="ui">
+  <button id="start">開始</button>
+</div>
+
 <canvas id="cv"></canvas>
 
 <script>
-const cam=document.getElementById('cam');
-const ov=document.getElementById('overlay');
-const ui=document.getElementById('ui');
-const cv=document.getElementById('cv');
-const ctx=cv.getContext('2d',{willReadFrequently:true});
+const cam = document.getElementById('cam');
+const ov  = document.getElementById('overlay');
+const snd = document.getElementById('snd');
+const ui  = document.getElementById('ui');
+const cv  = document.getElementById('cv');
+const ctx = cv.getContext('2d',{willReadFrequently:true});
 
 let running=false;
 let lastQuad=null;
 let lastSeen=0;
 let frame=0;
+let audioReady=false;
+let audioPlaying=false;
 
-// ===== 設定（ここだけ触ればOK） =====
-const HOLD_MS = 1500;     // 見失っても保持する時間
-const SMOOTH = 0.25;     // 追従の滑らかさ（0.1〜0.4）
-const DETECT_EVERY = 3;  // 何フレームに1回QR検出するか
-// ===================================
+// ===== 安定化設定 =====
+const HOLD_MS = 1500;
+const SMOOTH = 0.25;
+const DETECT_EVERY = 3;
+// ======================
 
-function lerp(a,b,t){ return a+(b-a)*t; }
-function smoothQuad(prev,next){
-  if(!prev) return next;
-  return prev.map((p,i)=>({
-    x: lerp(p.x,next[i].x,SMOOTH),
-    y: lerp(p.y,next[i].y,SMOOTH)
+function lerp(a,b,t){return a+(b-a)*t;}
+function smoothQuad(p,n){
+  if(!p) return n;
+  return p.map((v,i)=>({
+    x: lerp(v.x,n[i].x,SMOOTH),
+    y: lerp(v.y,n[i].y,SMOOTH)
   }));
 }
 
@@ -105,21 +115,80 @@ function applyQuad(el,q){
   }
   const h0=M.map(r=>r[8]);
   const [a,c,e,b,d,f,g,h_]=h0;
-  el.style.transform=
-    `matrix3d(${a},${b},0,${g}, ${c},${d},0,${h_}, 0,0,1,0, ${e},${f},0,1)`;
+  el.style.transform =
+    `matrix3d(${a},${b},0,${g},
+              ${c},${d},0,${h_},
+              0,0,1,0,
+              ${e},${f},0,1)`;
+}
+
+async function forceZoom1(track){
+  try{
+    const caps = track.getCapabilities?.();
+    if(caps && caps.zoom){
+      await track.applyConstraints({
+        advanced:[{ zoom: 1.0 }]
+      });
+    }
+  }catch(e){
+    // 対応していない端末では無視
+  }
+}
+
+async function armAudio(){
+  try{
+    snd.currentTime=0;
+    snd.volume=1.0;
+    await snd.play();
+    snd.pause();
+    snd.currentTime=0;
+    audioReady=true;
+  }catch(e){}
 }
 
 async function start(){
-  const s=await navigator.mediaDevices.getUserMedia({
-    video:{facingMode:{ideal:'environment'}},audio:false
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video:{
+      facingMode:{ideal:'environment'},
+      zoom:1
+    },
+    audio:false
   });
-  cam.srcObject=s;
+  cam.srcObject = stream;
   await cam.play();
-  try{await ov.play()}catch(e){}
+
+  // ★ズーム×1を強制
+  const track = stream.getVideoTracks()[0];
+  await forceZoom1(track);
+
+  // 動画（見た目）
+  try{ await ov.play(); }catch(_){}
   ov.pause(); ov.currentTime=0;
+
+  // ★MP3 許可取り
+  await armAudio();
+
   ui.style.display='none';
   running=true;
   tick();
+}
+
+function onFound(){
+  if(ov.style.display!=='block'){
+    ov.style.display='block';
+    ov.play().catch(()=>{});
+  }
+  if(audioReady && !audioPlaying){
+    snd.currentTime=0;
+    snd.play().then(()=>audioPlaying=true).catch(()=>{});
+  }
+}
+
+function onLost(){
+  ov.pause(); ov.currentTime=0; ov.style.display='none';
+  if(audioPlaying){
+    snd.pause(); snd.currentTime=0; audioPlaying=false;
+  }
 }
 
 function tick(){
@@ -132,34 +201,35 @@ function tick(){
     cv.width=sw; cv.height=sh;
     ctx.drawImage(cam,0,0,sw,sh);
     const img=ctx.getImageData(0,0,sw,sh);
-    const code=jsQR(img.data,sw,sh);
+
+    const code = jsQR(img.data, sw, sh, {
+      inversionAttempts:'attemptBoth'
+    });
 
     if(code){
       const l=code.location;
-      const quad=[
+      const q=[
         mapPoint(l.topLeftCorner,sw,sh),
         mapPoint(l.topRightCorner,sw,sh),
         mapPoint(l.bottomRightCorner,sw,sh),
         mapPoint(l.bottomLeftCorner,sw,sh)
       ];
-      lastQuad=smoothQuad(lastQuad,quad);
+      lastQuad=smoothQuad(lastQuad,q);
       lastSeen=performance.now();
     }
   }
 
   if(lastQuad && performance.now()-lastSeen < HOLD_MS){
-    ov.style.display='block';
     applyQuad(ov,lastQuad);
-    if(ov.paused) ov.play();
+    onFound();
   }else{
-    ov.pause();
-    ov.style.display='none';
+    onLost();
   }
 
   requestAnimationFrame(tick);
 }
 
-document.getElementById('start').onclick=start;
+document.getElementById('start').onclick = start;
 </script>
 
 </body>
