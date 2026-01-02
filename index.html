@@ -2,61 +2,256 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Camera Max Resolution Probe</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>年賀状AR（QR + MP3 / ピント安定版）</title>
+
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
 <style>
 html,body{
-  margin:0;
-  height:100%;
-  background:#000;
-  color:#0f0;
-  font-family:monospace;
+  margin:0;height:100%;overflow:hidden;background:#000;
+  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
 }
-#bar{
-  padding:8px;
-  background:rgba(0,0,0,.7);
+#cam{
+  position:fixed;inset:0;width:100%;height:100%;
+  object-fit:cover;background:#000;
 }
-video{
-  display:block;
-  margin:auto;
+#overlay{
+  position:fixed;
+  transform-origin:0 0;
+  display:none;
+  pointer-events:none;
 }
+#ui{
+  position:fixed;inset:0;z-index:10;
+  display:flex;align-items:center;justify-content:center;flex-direction:column;gap:10px;
+  background:rgba(0,0,0,.85);color:#fff;padding:16px;
+}
+button{
+  font-size:18px;font-weight:900;
+  padding:16px 24px;border-radius:14px;border:0;
+  width:100%;max-width:360px;
+}
+#tips{
+  width:100%;max-width:360px;
+  font-size:12px;line-height:1.45;opacity:.9;
+}
+#log{
+  width:100%;max-width:360px;height:170px;overflow:auto;
+  background:rgba(255,255,255,.06);
+  border:1px solid rgba(255,255,255,.18);
+  border-radius:12px;
+  padding:10px;
+  font-size:12px;line-height:1.45;
+  white-space:pre-wrap;word-break:break-word;
+}
+canvas{display:none}
 </style>
 </head>
 
 <body>
-<div id="bar">
-  <div id="info">start</div>
+
+<video id="cam" autoplay muted playsinline></video>
+
+<!-- 見た目用（無音） -->
+<video id="overlay" src="./overlay.mp4" loop muted playsinline webkit-playsinline></video>
+
+<!-- 音はMP3で鳴らす（確実） -->
+<audio id="snd" src="./sound.mp3" preload="auto"></audio>
+
+<div id="ui">
   <button id="start">開始</button>
+
+  <div id="tips">
+    ・ピントが合わない時は「近づき過ぎ」が多いです（25〜35cm目安）<br>
+    ・明るい場所（影少なめ）だと安定します
+  </div>
+
+  <div id="log"></div>
 </div>
 
-<video id="v" playsinline muted></video>
+<canvas id="cv"></canvas>
 
 <script>
-const v = document.getElementById('v');
-const info = document.getElementById('info');
-const btn = document.getElementById('start');
+const cam=document.getElementById('cam');
+const ov=document.getElementById('overlay');
+const snd=document.getElementById('snd');
+const ui=document.getElementById('ui');
+const log=document.getElementById('log');
+const cv=document.getElementById('cv');
+const ctx=cv.getContext('2d',{willReadFrequently:true});
 
-btn.onclick = async ()=>{
-  try{
-    const stream = await navigator.mediaDevices.getUserMedia({
-      video:{
-        facingMode:{ideal:'environment'},
-        width:{ exact:3840 },
-        height:{ exact:2160 }
-      },
-      audio:false
-    });
-    v.srcObject = stream;
-    await v.play();
+function add(t){
+  const d=new Date();
+  const ts=String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');
+  log.textContent += `[${ts}] ${t}\n`;
+  log.scrollTop = log.scrollHeight;
+}
 
-    const t = stream.getVideoTracks()[0];
-    const s = t.getSettings();
-    info.textContent = `GRANTED ${s.width} x ${s.height}`;
-  }catch(e){
-    info.textContent = `FAILED: ${e.name}`;
-  }
+// ===== 追従の安定化 =====
+const HOLD_MS=1500;       // 一瞬見失っても保持
+const SMOOTH=0.25;        // 座標をなだらかに
+const DETECT_EVERY=3;     // 検出を間引いて安定
+// ======================
+
+// ===== カメラ設定（ピント迷子回避のため「ズーム/フォーカス指定なし」） =====
+// 重要：ここで zoom / focusMode などを指定しないこと
+const CAM_CONSTRAINTS = {
+  video: {
+    facingMode: { ideal: 'environment' },
+    width:  { ideal: 1280 },
+    height: { ideal: 720 },
+    frameRate: { ideal: 30 }
+  },
+  audio: false
 };
+// ===========================================================================
+
+let running=false;
+let lastQuad=null;
+let lastSeen=0;
+let frame=0;
+let audioArmed=false;
+let audioPlaying=false;
+
+function lerp(a,b,t){return a+(b-a)*t;}
+function smoothQuad(p,n){
+  if(!p) return n;
+  return p.map((v,i)=>({x:lerp(v.x,n[i].x,SMOOTH),y:lerp(v.y,n[i].y,SMOOTH)}));
+}
+
+function mapPoint(p, sw, sh){
+  const vw=cam.videoWidth, vh=cam.videoHeight;
+  const W=innerWidth, H=innerHeight;
+  const arV=vw/vh, arS=W/H;
+  let dw,dh,ox,oy;
+  if(arV>arS){ dh=H; dw=H*arV; ox=(W-dw)/2; oy=0; }
+  else       { dw=W; dh=W/arV; ox=0; oy=(H-dh)/2; }
+  return { x:ox+(p.x/sw)*dw, y:oy+(p.y/sh)*dh };
+}
+
+// 射影変換（四隅 → CSS matrix3d）
+function applyQuad(el,q){
+  const w=el.videoWidth||200,h=el.videoHeight||200;
+  const src=[[0,0],[w,0],[w,h],[0,h]];
+  const A=[],B=[];
+  for(let i=0;i<4;i++){
+    const [x,y]=src[i],X=q[i].x,Y=q[i].y;
+    A.push([x,y,1,0,0,0,-x*X,-y*X]); B.push(X);
+    A.push([0,0,0,x,y,1,-x*Y,-y*Y]); B.push(Y);
+  }
+  const M=A.map((r,i)=>r.concat([B[i]]));
+  for(let i=0;i<8;i++){
+    let m=i;
+    for(let j=i+1;j<8;j++) if(Math.abs(M[j][i])>Math.abs(M[m][i])) m=j;
+    [M[i],M[m]]=[M[m],M[i]];
+    const p=M[i][i]||1e-9;
+    for(let j=i;j<9;j++) M[i][j]/=p;
+    for(let j=0;j<8;j++) if(j!==i){
+      const f=M[j][i];
+      for(let k=i;k<9;k++) M[j][k]-=f*M[i][k];
+    }
+  }
+  const h0=M.map(r=>r[8]);
+  const [a,c,e,b,d,f,g,h_]=h0;
+  el.style.transform=
+    `matrix3d(${a},${b},0,${g},
+              ${c},${d},0,${h_},
+              0,0,1,0,
+              ${e},${f},0,1)`;
+}
+
+async function armAudio(){
+  // ユーザー操作で一度だけ play → pause して「音声許可」を取る
+  try{
+    snd.currentTime=0;
+    snd.volume=1.0;
+    await snd.play();
+    snd.pause();
+    snd.currentTime=0;
+    audioArmed=true;
+    add('audio armed: OK');
+  }catch(e){
+    add('audio armed: BLOCKED (' + (e?.name||e) + ')');
+  }
+}
+
+async function start(){
+  add('getUserMedia...');
+  const stream = await navigator.mediaDevices.getUserMedia(CAM_CONSTRAINTS);
+  cam.srcObject = stream;
+  await cam.play();
+  add('camera: OK ' + cam.videoWidth + 'x' + cam.videoHeight);
+
+  // overlay（無音）準備
+  try{ await ov.play(); }catch(_){}
+  ov.pause(); ov.currentTime=0;
+
+  // MP3許可取り
+  await armAudio();
+
+  ui.style.display='none';
+  running=true;
+  tick();
+}
+
+function onFound(){
+  if(ov.style.display!=='block'){
+    ov.style.display='block';
+    ov.play().catch(()=>{});
+  }
+  if(audioArmed && !audioPlaying){
+    snd.currentTime=0;
+    snd.play().then(()=>{ audioPlaying=true; }).catch(()=>{});
+  }
+}
+
+function onLost(){
+  ov.pause(); ov.currentTime=0; ov.style.display='none';
+  if(audioPlaying){
+    snd.pause(); snd.currentTime=0; audioPlaying=false;
+  }
+}
+
+function tick(){
+  if(!running) return;
+  frame++;
+
+  if(cam.videoWidth && frame % DETECT_EVERY === 0){
+    const sw=360;
+    const sh=Math.round(cam.videoHeight*(sw/cam.videoWidth));
+    cv.width=sw; cv.height=sh;
+    ctx.drawImage(cam,0,0,sw,sh);
+    const img=ctx.getImageData(0,0,sw,sh);
+
+    // 反転も拾いやすく
+    const code = jsQR(img.data, sw, sh, { inversionAttempts:"attemptBoth" });
+
+    if(code){
+      const l=code.location;
+      const q=[
+        mapPoint(l.topLeftCorner,sw,sh),
+        mapPoint(l.topRightCorner,sw,sh),
+        mapPoint(l.bottomRightCorner,sw,sh),
+        mapPoint(l.bottomLeftCorner,sw,sh)
+      ];
+      lastQuad=smoothQuad(lastQuad,q);
+      lastSeen=performance.now();
+    }
+  }
+
+  if(lastQuad && performance.now()-lastSeen < HOLD_MS){
+    applyQuad(ov,lastQuad);
+    onFound();
+  }else{
+    onLost();
+  }
+
+  requestAnimationFrame(tick);
+}
+
+document.getElementById('start').onclick = start;
 </script>
+
 </body>
 </html>
