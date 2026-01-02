@@ -10,10 +10,18 @@
 
   <style>
     html, body { margin:0; height:100%; overflow:hidden; background:#000; }
-    /* A-FrameのVRボタンを強制的に消す（端末差で出ることがある） */
-    .a-enter-vr, .a-enter-ar { display:none !important; }
-
     a-scene { position:fixed; inset:0; }
+
+    /* VR/ARボタンをとにかく全殺し（A-Frameの版・端末差吸収） */
+    .a-enter-vr,
+    .a-enter-ar,
+    .a-enter-vr-button,
+    .a-enter-ar-button,
+    .a-enter-xr,
+    .a-enter-xr-button,
+    [class*="enter-vr"],
+    [class*="enter-ar"],
+    [class*="enter-xr"] { display:none !important; visibility:hidden !important; opacity:0 !important; }
 
     #ui{
       position:fixed; inset:0; z-index:9999;
@@ -45,7 +53,6 @@
       font-size:12px; line-height:1.45;
       white-space:pre-wrap; word-break:break-word;
     }
-    /* カメラ単体テスト用プレビュー（UI上に小さく表示） */
     #camPreview {
       width:100%;
       max-width:360px;
@@ -74,8 +81,8 @@
     </div>
 
     <div class="box" style="opacity:.9;font-size:13px;">
-      ①まず「開始」で<b>カメラ単体テスト</b> → ②OKなら<b>MindAR起動</b>します。<br>
-      黒いままならログを貼ってください。
+      「開始」→ まず<b>カメラ単体プレビュー</b>が映るか確認 → 続けてMindAR起動。<br>
+      黒ならログを貼ってください（UIは黒でも消えません）。
     </div>
 
     <button id="startBtn" disabled>開始（診断込み）</button>
@@ -89,11 +96,12 @@
 
   <a-scene
     embedded
-    mindar-image="imageTargetSrc: ./targets.mind; autoStart:false; uiScanning:false; uiLoading:false;"
-    renderer="colorManagement:true"
     vr-mode-ui="enabled:false"
-    device-orientation-permission-ui="enabled:false">
-
+    xr-mode-ui="enabled:false"
+    device-orientation-permission-ui="enabled:false"
+    loading-screen="enabled:false"
+    renderer="colorManagement:true"
+    mindar-image="imageTargetSrc: ./targets.mind; autoStart:false; uiScanning:false; uiLoading:false;">
     <a-assets>
       <video id="ov" src="./overlay.mp4" loop muted playsinline webkit-playsinline crossorigin="anonymous"></video>
     </a-assets>
@@ -114,7 +122,6 @@
     const scene = document.querySelector('a-scene');
 
     const ov = document.getElementById('ov');
-
     const camPreview = document.getElementById('camPreview');
     const camTest = document.getElementById('camTest');
 
@@ -142,7 +149,13 @@
       }catch(_){return false;}
     }
 
-    // catchに入らないTypeErrorも拾う
+    // VRボタンをDOMから物理的に削除（CSSで消えない個体対策）
+    function killVRButtons(){
+      document.querySelectorAll('.a-enter-vr,.a-enter-ar,.a-enter-vr-button,.a-enter-xr,.a-enter-xr-button')
+        .forEach(el => el.remove());
+    }
+
+    // catchに入らないものも拾う
     window.addEventListener('error', (ev) => {
       add('[window.error] ' + (ev.message || ev.error));
       if (ev.error && ev.error.stack) add(ev.error.stack);
@@ -167,12 +180,11 @@
       }
     }
 
-    // カメラ単体テスト（ここが黒なら MindAR以前の問題）
+    // カメラ単体テスト（これが黒ならMindAR以前の問題）
     async function cameraSelfTest(){
       add('cameraSelfTest: start');
       camPreview.style.display = 'block';
 
-      // できるだけ環境カメラ優先
       const constraints = {
         audio: false,
         video: {
@@ -184,46 +196,41 @@
 
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       camTest.srcObject = stream;
-
-      // 再生開始待ち
       await camTest.play();
-
-      // 数フレーム待って「黒じゃない」可能性を上げる
       await new Promise(r => setTimeout(r, 600));
 
-      // 状態ログ
       add(`cameraSelfTest: videoWidth=${camTest.videoWidth} videoHeight=${camTest.videoHeight} readyState=${camTest.readyState}`);
 
-      // もし videoWidth=0 のままなら “カメラ取れてない/黒確定寄り”
-      if (!camTest.videoWidth) {
-        add('cameraSelfTest: WARNING videoWidth=0 (camera stream not delivering frames)');
-      } else {
-        add('cameraSelfTest: OK (frames coming)');
-      }
+      const okFrames = !!camTest.videoWidth;
+      add('cameraSelfTest: ' + (okFrames ? 'OK (frames coming)' : 'WARNING videoWidth=0 (black/blocked)'));
 
-      // テストは止める（MindARが別で掴む）
+      // ここでは止める（MindAR側で別取得するため）
       stream.getTracks().forEach(t => t.stop());
       camTest.srcObject = null;
       camPreview.style.display = 'none';
       add('cameraSelfTest: stopped');
+
+      return okFrames;
     }
 
-    // MindARのstart()がどこに居るか（system優先）
+    // MindAR start() 解決（system優先）
     function resolveMindARStarter(){
       const sys = scene.systems && scene.systems["mindar-image-system"];
       const comp = scene.components && scene.components["mindar-image"];
-
-      if (sys && typeof sys.start === 'function') {
-        return { mode:'system', start: () => sys.start() };
-      }
-      if (comp && typeof comp.start === 'function') {
-        return { mode:'component', start: () => comp.start() };
-      }
+      if (sys && typeof sys.start === 'function') return { mode:'system', start: () => sys.start() };
+      if (comp && typeof comp.start === 'function') return { mode:'component', start: () => comp.start() };
       return null;
     }
 
+    // MindARイベント（黒原因の確定に使う）
+    scene.addEventListener('arReady', () => add('EVENT: arReady (camera texture ready)'));
+    scene.addEventListener('arError', (e) => add('EVENT: arError ' + (e?.detail ? JSON.stringify(e.detail) : '')));
+
     // ---- boot ----
     window.addEventListener('load', async ()=> {
+      killVRButtons();
+      setInterval(killVRButtons, 500); // しつこい個体対策
+
       env.textContent = 'env: ' + (inAppUA() ? 'in-app-webview' : 'browser/Other');
       add('boot...');
       add('secureContext: ' + window.isSecureContext);
@@ -263,16 +270,19 @@
     // ---- start ----
     startBtn.onclick = async ()=> {
       try{
+        killVRButtons();
         setS('starting');
         add('start tapped');
 
-        // まずカメラ単体で「黒」かどうか分離
-        await cameraSelfTest();
+        // ①カメラ単体で「黒かどうか」判定
+        const cameraOK = await cameraSelfTest();
+        add('cameraSelfTest result: ' + (cameraOK ? 'OK' : 'BLACK'));
 
-        // iOS対策：ユーザー操作で overlay を一度触る
+        // overlayはユーザー操作で触っておく（iOS対策）
         try { await ov.play(); add('overlay.play(): OK'); }
         catch(e){ add('overlay.play(): NG ' + (e?.message||e)); }
 
+        // ②MindAR start
         const starter = resolveMindARStarter();
         if (!starter) throw new Error('MindAR start() not ready');
 
@@ -280,8 +290,22 @@
         await starter.start();
         add('mindar.start(): OK');
 
-        // UIを消す（黒ならここで“黒確定”が見える）
-        document.getElementById('ui').style.display = 'none';
+        // ここで arReady が来るか観察するため UIは消さない（黒ならログ取得優先）
+        add('NOTE: UI stays for diagnosis. If camera view is OK, you can hide UI manually later.');
+
+        // 「本運用」では arReady を待って UI を消すのが安全
+        let readyFired = false;
+        const onReady = () => { readyFired = true; };
+        scene.addEventListener('arReady', onReady, { once:true });
+
+        setTimeout(()=>{
+          if (!readyFired) {
+            add('WARNING: arReady not fired within 3s (likely black camera texture on A-Frame/MindAR)');
+          } else {
+            add('OK: arReady fired (you can hide UI for production)');
+          }
+        }, 3000);
+
         setS('running');
 
       }catch(e){
