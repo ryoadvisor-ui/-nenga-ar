@@ -3,113 +3,303 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Camera Diagnose</title>
+  <title>年賀状AR（QRトリガー / DOM合成）</title>
+
+  <!-- QRデコード（軽い・WASM不要） -->
+  <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
+
   <style>
-    html, body { margin: 0; height: 100%; background: #000; color: #fff; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
-    #wrap { height: 100%; display: flex; flex-direction: column; }
-    #bar { padding: 10px 12px; background: rgba(0,0,0,0.6); }
-    #videoBox { flex: 1; display: flex; align-items: center; justify-content: center; }
-    video { max-width: 100%; max-height: 100%; background: #000; } /* ←固定やobject-fitを使わない（まず安全） */
-    button { margin-top: 8px; padding: 10px 12px; border: 0; border-radius: 10px; font-size: 16px; }
-    .row { display: flex; gap: 8px; flex-wrap: wrap; }
-    .pill { display:inline-block; padding: 2px 8px; border: 1px solid rgba(255,255,255,0.35); border-radius: 999px; font-size: 12px; opacity: 0.9; }
+    html, body { margin:0; height:100%; overflow:hidden; background:#000; font-family:system-ui,-apple-system,"Segoe UI",sans-serif; }
+
+    /* カメラ映像 */
+    #cam {
+      position:fixed; inset:0;
+      width:100%; height:100%;
+      object-fit:cover;
+      background:#000;
+      z-index:0;
+    }
+
+    /* 合成する動画（年賀状の絵が動く部分） */
+    #overlay {
+      position:fixed;
+      left:0; top:0;
+      width:100px; height:100px; /* 初期値（検出後に変形） */
+      transform-origin: 0 0;
+      display:none;
+      z-index:2;
+      pointer-events:none;
+    }
+
+    /* 診断UI */
+    #ui{
+      position:fixed; inset:0; z-index:10;
+      display:flex; align-items:center; justify-content:center;
+      flex-direction:column; gap:10px;
+      background:rgba(0,0,0,.82); color:#fff;
+      padding:16px;
+    }
+    button{
+      padding:14px 18px; border:0; border-radius:14px;
+      font-size:16px; font-weight:800;
+      width:100%; max-width:360px;
+    }
+    .box{ width:100%; max-width:360px; font-size:13px; opacity:.95; }
+    .pill{
+      display:inline-block; padding:2px 8px;
+      border:1px solid rgba(255,255,255,.35);
+      border-radius:999px; font-size:12px; opacity:.9;
+      margin-right:6px; margin-bottom:6px;
+    }
+    #log{
+      width:100%; max-width:360px; height:220px;
+      overflow:auto;
+      background:rgba(255,255,255,.06);
+      border:1px solid rgba(255,255,255,.18);
+      border-radius:12px;
+      padding:10px;
+      white-space:pre-wrap;
+      word-break:break-word;
+      font-size:12px;
+      line-height:1.45;
+    }
+
+    /* 検出用canvasは非表示 */
+    #cv { display:none; }
   </style>
 </head>
 <body>
-  <div id="wrap">
-    <div id="bar">
-      <div id="msg">「開始」を押してください（ユーザー操作が必要）</div>
-      <div class="row">
-        <span class="pill" id="state">state: idle</span>
-        <span class="pill" id="dims">video: -</span>
-        <span class="pill" id="err">error: -</span>
-      </div>
-      <div class="row">
-        <button id="start">開始（背面優先）</button>
-        <button id="stop">停止</button>
-      </div>
-    </div>
 
-    <div id="videoBox">
-      <video id="v" playsinline muted></video>
+  <video id="cam" playsinline muted></video>
+
+  <!-- 合成する動画：ここに「動く絵」 -->
+  <video id="overlay" src="./overlay.mp4" loop muted playsinline webkit-playsinline></video>
+
+  <canvas id="cv"></canvas>
+
+  <div id="ui">
+    <div class="box"><b>年賀状AR（QRトリガー / DOM合成）</b></div>
+    <div class="box">
+      <span class="pill" id="st">state: idle</span>
+      <span class="pill" id="qr">qr: -</span>
+      <span class="pill" id="dims">cam: -</span>
     </div>
+    <button id="start">開始（カメラ許可）</button>
+    <div class="box">QRを年賀状の絵の近くに小さく印刷してください（2〜3cm目安）。検出したら動画がその位置に貼り付きます。</div>
+    <div id="log"></div>
   </div>
 
-  <script>
-    const v = document.getElementById('v');
-    const msg = document.getElementById('msg');
-    const state = document.getElementById('state');
-    const dims = document.getElementById('dims');
-    const err = document.getElementById('err');
-    const startBtn = document.getElementById('start');
-    const stopBtn = document.getElementById('stop');
-    let stream = null;
+<script>
+  const cam = document.getElementById('cam');
+  const ov = document.getElementById('overlay');
+  const cv = document.getElementById('cv');
+  const ctx = cv.getContext('2d', { willReadFrequently: true });
 
-    function setState(s){ state.textContent = 'state: ' + s; }
-    function setErr(e){ err.textContent = 'error: ' + e; }
+  const ui = document.getElementById('ui');
+  const st = document.getElementById('st');
+  const qr = document.getElementById('qr');
+  const dims = document.getElementById('dims');
+  const log = document.getElementById('log');
 
-    function updateDims() {
-      const w = v.videoWidth || 0;
-      const h = v.videoHeight || 0;
-      dims.textContent = `video: ${w}x${h}`;
+  function add(t){
+    const d=new Date();
+    const ts = String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');
+    log.textContent += `[${ts}] ${t}\n`;
+    log.scrollTop = log.scrollHeight;
+  }
+  function setState(s){ st.textContent = 'state: ' + s; }
+
+  // --- 4点対応の射影変換（quad -> css matrix3d）
+  // 参考：CSSで平面四隅に貼る定番手法（射影行列）
+  function perspectiveTransform(from, to){
+    // from/to: {x,y} 4点 (0..3) を同順で
+    // 解く：8元一次方程式
+    const A = [];
+    const b = [];
+    for (let i=0;i<4;i++){
+      const x = from[i].x, y = from[i].y;
+      const X = to[i].x,   Y = to[i].y;
+      A.push([x, y, 1, 0, 0, 0, -x*X, -y*X]); b.push(X);
+      A.push([0, 0, 0, x, y, 1, -x*Y, -y*Y]); b.push(Y);
+    }
+    // ガウス消去
+    const n = 8;
+    const M = A.map((row,i)=>row.concat([b[i]]));
+    for(let i=0;i<n;i++){
+      // pivot
+      let maxRow=i;
+      for(let r=i+1;r<n;r++) if(Math.abs(M[r][i])>Math.abs(M[maxRow][i])) maxRow=r;
+      const tmp=M[i]; M[i]=M[maxRow]; M[maxRow]=tmp;
+
+      const pivot=M[i][i] || 1e-12;
+      for(let c=i;c<=n;c++) M[i][c]/=pivot;
+      for(let r=0;r<n;r++){
+        if(r===i) continue;
+        const f=M[r][i];
+        for(let c=i;c<=n;c++) M[r][c]-=f*M[i][c];
+      }
+    }
+    const h = M.map(r=>r[n]); // h0..h7
+    // 3x3:
+    // [h0 h1 h2]
+    // [h3 h4 h5]
+    // [h6 h7 1 ]
+    return h;
+  }
+
+  function applyQuadToElement(el, quad){
+    // quad: [p0,p1,p2,p3] in screen coords
+    // 要素のローカル矩形（左上原点）
+    const w = el.videoWidth || el.clientWidth || 1;
+    const h = el.videoHeight || el.clientHeight || 1;
+
+    // ローカル（from）: (0,0),(w,0),(w,h),(0,h)
+    const from = [
+      {x:0,y:0},{x:w,y:0},{x:w,y:h},{x:0,y:h}
+    ];
+    const to = quad;
+
+    const H = perspectiveTransform(from, to);
+    // CSS matrix3d に落とす（2D射影→3D形式）
+    // 参考配置:
+    // | a c e |
+    // | b d f |
+    // | g h 1 |
+    //
+    // CSS matrix3d:
+    // [a b 0 g
+    //  c d 0 h
+    //  0 0 1 0
+    //  e f 0 1]
+    const a=H[0], c=H[1], e=H[2];
+    const b=H[3], d=H[4], f=H[5];
+    const g=H[6], h_=H[7];
+
+    el.style.transform = `matrix3d(${a},${b},0,${g}, ${c},${d},0,${h_}, 0,0,1,0, ${e},${f},0,1)`;
+  }
+
+  function mapPoint(p, srcW, srcH){
+    // jsQRの座標（canvas座標）→ 画面座標へ（object-fit:cover の補正込み）
+    const vw = cam.videoWidth, vh = cam.videoHeight;
+    const sw = window.innerWidth, sh = window.innerHeight;
+
+    // camは object-fit:cover なので、表示領域に合わせてスケールとオフセットが出る
+    const videoAR = vw / vh;
+    const screenAR = sw / sh;
+
+    let drawW, drawH, offsetX, offsetY;
+    if (videoAR > screenAR){
+      // videoが横長 → 高さ合わせ、左右がはみ出す
+      drawH = sh;
+      drawW = sh * videoAR;
+      offsetX = (sw - drawW) / 2;
+      offsetY = 0;
+    } else {
+      // videoが縦長 → 幅合わせ、上下がはみ出す
+      drawW = sw;
+      drawH = sw / videoAR;
+      offsetX = 0;
+      offsetY = (sh - drawH) / 2;
     }
 
-    async function start() {
-      setErr('-');
+    const x = offsetX + (p.x / srcW) * drawW;
+    const y = offsetY + (p.y / srcH) * drawH;
+    return {x, y};
+  }
+
+  let running = false;
+  let lastFoundAt = 0;
+
+  async function start(){
+    try{
       setState('starting');
-      msg.textContent = 'カメラ起動中…（許可が出たら許可）';
+      add('request camera...');
 
-      try {
-        if (stream) stream.getTracks().forEach(t => t.stop());
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: {
+          facingMode: { ideal: 'environment' }
+        },
+        audio: false
+      });
 
-        // まずは「背面優先 + 解像度は理想指定」だけ。強い指定はしない。
-        stream = await navigator.mediaDevices.getUserMedia({
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 }
-          },
-          audio: false
-        });
+      cam.srcObject = stream;
+      await cam.play(); // ★これで「黒いけど権限OK」系を潰す
 
-        v.srcObject = stream;
+      // iOS: overlayはユーザー操作で触る必要があることがある
+      try { await ov.play(); } catch(_) {}
+      ov.pause(); ov.currentTime = 0;
 
-        // play失敗が黒画面の原因になるので、awaitで確実に拾う
-        await v.play();
+      ui.style.display = 'none';
+      setState('running');
+      running = true;
+      tick();
+    } catch(e){
+      setState('failed');
+      add('ERROR: ' + (e?.name||'') + ' ' + (e?.message||e));
+      ui.style.display = 'flex';
+    }
+  }
 
-        setState('playing');
-        msg.textContent = 'OK：映像が出れば成功。黒くなったら error を見てください。';
+  function tick(){
+    if(!running) return;
 
-      } catch (e) {
-        setState('failed');
-        setErr((e && e.name) ? e.name : String(e));
-        msg.textContent = '失敗：error を教えてください（例: NotAllowedError 等）';
+    if(cam.videoWidth && cam.videoHeight){
+      dims.textContent = `cam: ${cam.videoWidth}x${cam.videoHeight}`;
+
+      // 検出は軽くする（300x? 程度）
+      const targetW = 420;
+      const scale = targetW / cam.videoWidth;
+      const targetH = Math.round(cam.videoHeight * scale);
+
+      cv.width = targetW;
+      cv.height = targetH;
+
+      ctx.drawImage(cam, 0, 0, cv.width, cv.height);
+      const img = ctx.getImageData(0,0,cv.width,cv.height);
+
+      const code = jsQR(img.data, img.width, img.height, {
+        inversionAttempts: "attemptBoth"
+      });
+
+      if(code){
+        qr.textContent = 'qr: found';
+        lastFoundAt = performance.now();
+
+        // jsQRは location に四隅がある（clockwise）
+        const loc = code.location;
+        const p0 = mapPoint(loc.topLeftCorner,     cv.width, cv.height);
+        const p1 = mapPoint(loc.topRightCorner,    cv.width, cv.height);
+        const p2 = mapPoint(loc.bottomRightCorner, cv.width, cv.height);
+        const p3 = mapPoint(loc.bottomLeftCorner,  cv.width, cv.height);
+
+        // overlay動画を表示して、四隅へ貼る
+        ov.style.display = 'block';
+
+        // ※ここで「QRの上」に貼られる。
+        // 絵の位置に貼りたいなら、次の "オフセット" を調整する（下に説明あり）
+        applyQuadToElement(ov, [p0,p1,p2,p3]);
+
+        // 再生
+        if(ov.paused){
+          ov.play().catch(()=>{});
+        }
+
+      }else{
+        // 0.5秒見失ったら消す（チラつき防止）
+        if(performance.now() - lastFoundAt > 500){
+          qr.textContent = 'qr: -';
+          ov.pause();
+          ov.currentTime = 0;
+          ov.style.display = 'none';
+        }
       }
     }
 
-    function stop() {
-      setState('stopped');
-      msg.textContent = '停止しました';
-      if (stream) stream.getTracks().forEach(t => t.stop());
-      stream = null;
-      v.srcObject = null;
-    }
+    requestAnimationFrame(tick);
+  }
 
-    // 状態監視：ここに原因が出ることが多い
-    v.addEventListener('loadedmetadata', updateDims);
-    v.addEventListener('resize', updateDims);
-    v.addEventListener('pause', () => { setState('paused'); msg.textContent = '一時停止（勝手に止まった可能性）'; });
-    v.addEventListener('error', () => { setErr('video_error'); });
+  document.getElementById('start').addEventListener('click', start);
+</script>
 
-    startBtn.addEventListener('click', start);
-    stopBtn.addEventListener('click', stop);
-
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      msg.textContent = 'このブラウザは getUserMedia に未対応です（Safari/Chrome推奨）';
-      setState('unsupported');
-      startBtn.disabled = true;
-      stopBtn.disabled = true;
-    }
-  </script>
 </body>
 </html>
