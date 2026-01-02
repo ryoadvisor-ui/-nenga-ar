@@ -2,34 +2,34 @@
 <html lang="ja">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
   <title>年賀AR</title>
 
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
 
   <style>
-    html, body {
-      margin: 0;
-      width: 100%;
-      height: 100%;
-      overflow: hidden;
-      background: #000;
-      touch-action: none;
-    }
+    html, body { margin: 0; width: 100%; height: 100%; overflow: hidden; background: #000; }
 
-    /* A-Frameのcanvasが「変な拡大・台形・荒れ」に繋がるのを防ぐ */
-    canvas.a-canvas {
+    /* ここが安全策：
+       arjsが作る video にだけ「画面に収める」を適用する（canvasは触らない） */
+    video.arjs-video {
       position: fixed !important;
-      top: 0; left: 0;
+      top: 0 !important;
+      left: 0 !important;
       width: 100vw !important;
       height: 100vh !important;
-      object-fit: cover;   /* 引き伸ばしを避けて、足りない分はトリミング */
+      object-fit: contain !important; /* ← “画面に収める”。黒帯は出るが歪まない */
+      z-index: 0 !important;
+    }
+
+    /* A-Frameのcanvasは触らない（黒画面の原因になりやすい） */
+    canvas.a-canvas {
+      z-index: 1 !important;
     }
 
     .ui {
-      position: fixed;
-      left: 0; right: 0; top: 0;
+      position: fixed; left: 0; right: 0; top: 0;
       padding: 10px 12px;
       background: rgba(0,0,0,0.55);
       color: #fff;
@@ -42,33 +42,21 @@
 <body>
   <div class="ui">カメラを許可 → <b>Hiroマーカー</b>にかざしてください</div>
 
-  <!--
-    改善ポイント
-    - facingMode: environment で背面固定（ズーム/歪み/荒れの原因が前面カメラだったケースを排除）
-    - sourceWidth/sourceHeight を上げて「ドット絵」を抑える
-    - displayWidth/displayHeight も指定して表示側の崩れを抑える
-  -->
   <a-scene
     embedded
     vr-mode-ui="enabled: false"
-    renderer="antialias: true; colorManagement: true; precision: mediump;"
+    renderer="antialias: true; colorManagement: true;"
     arjs="
       sourceType: webcam;
-      facingMode: environment;
       debugUIEnabled: false;
-
-      sourceWidth: 1280;
-      sourceHeight: 720;
-
-      displayWidth: 1280;
-      displayHeight: 720;
+      facingMode: environment;
+      sourceWidth: 640; sourceHeight: 480;
     "
   >
-    <!-- ズーム感が強い場合は fov を上げる（70〜80が効きやすい） -->
-    <a-entity camera="fov: 75;"></a-entity>
+    <!-- ズーム感が強い時は fov を上げる（70〜80）。まずは70 -->
+    <a-entity camera="fov: 70;"></a-entity>
 
     <a-marker preset="hiro">
-      <!-- これはマーカー上の表示。背景が壊れてる問題とは別なので最低限でOK -->
       <a-image
         src="overlay.png"
         position="0 0 0"
@@ -82,19 +70,5 @@
 
     <a-entity light="type: ambient; intensity: 0.9"></a-entity>
   </a-scene>
-
-  <script>
-    // ブラウザが低いレンダリング解像度を選んだときの救済（ドット絵感を減らす）
-    // ※端末によっては効かないこともあるが、害はない
-    window.addEventListener("load", () => {
-      const scene = document.querySelector("a-scene");
-      scene.addEventListener("renderstart", () => {
-        try {
-          const r = scene.renderer;
-          if (r && window.devicePixelRatio) r.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        } catch (_) {}
-      });
-    });
-  </script>
 </body>
 </html>
