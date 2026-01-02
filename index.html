@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>年賀状AR（MindAR・無料）</title>
+  <title>年賀状AR（MindAR診断）</title>
 
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
@@ -13,31 +13,48 @@
     #ui{
       position:fixed; inset:0; z-index:9999;
       display:flex; align-items:center; justify-content:center;
-      flex-direction:column; gap:12px;
-      background:rgba(0,0,0,.75); color:#fff;
+      flex-direction:column; gap:10px;
+      background:rgba(0,0,0,.80); color:#fff;
       font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
-      padding:20px; text-align:center;
+      padding:16px; text-align:left;
     }
-    button{ padding:12px 16px; border:0; border-radius:12px; font-size:16px; font-weight:700; }
-    #msg{ font-size:13px; opacity:.9; line-height:1.6; min-height:3.2em; }
+    button{ padding:12px 16px; border:0; border-radius:12px; font-size:16px; font-weight:700; width: 100%; max-width: 360px;}
+    .box{ width:100%; max-width: 360px; }
     .pill{ display:inline-block; padding:2px 8px; border:1px solid rgba(255,255,255,.35); border-radius:999px; font-size:12px; opacity:.9; }
-    #bar{ display:flex; gap:8px; flex-wrap:wrap; justify-content:center; }
+    #bar{ display:flex; gap:8px; flex-wrap:wrap; }
+    #log{
+      width:100%; max-width:360px; height: 240px; overflow:auto;
+      background: rgba(255,255,255,0.06);
+      border: 1px solid rgba(255,255,255,0.18);
+      border-radius: 12px;
+      padding: 10px;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    #title{ font-weight:800; font-size:16px; }
+    #hint{ font-size:12px; opacity:.9; line-height:1.5; }
   </style>
 </head>
 
 <body>
   <div id="ui">
-    <div style="font-size:18px;font-weight:700;">年賀状ARを開始</div>
-    <div id="bar">
+    <div class="box" id="title">年賀状AR（MindAR）診断</div>
+
+    <div class="box" id="bar">
       <span class="pill" id="st">state: boot</span>
-      <span class="pill" id="er">error: -</span>
+      <span class="pill" id="env">env: -</span>
     </div>
-    <div id="msg">読み込み中…（数秒待ってください）</div>
-    <button id="startBtn" disabled>開始</button>
-    <div style="font-size:12px;opacity:.75;line-height:1.5;">
-      ①開始 → ②カメラ許可 → ③年賀状にかざす<br>
-      ※iPhoneは開始ボタン必須
+
+    <div class="box" id="hint">
+      まずは <b>Safari/Chrome</b> で開いてください（LINE等のアプリ内ブラウザはNGになりがち）。<br>
+      「開始」を押してエラー詳細が出たら、そのまま貼ってください。
     </div>
+
+    <button id="startBtn" disabled>開始（診断込み）</button>
+
+    <div id="log"></div>
   </div>
 
   <a-scene
@@ -59,17 +76,34 @@
 
   <script>
     const ui = document.getElementById('ui');
-    const msg = document.getElementById('msg');
-    const st  = document.getElementById('st');
-    const er  = document.getElementById('er');
+    const st = document.getElementById('st');
+    const env = document.getElementById('env');
+    const log = document.getElementById('log');
     const startBtn = document.getElementById('startBtn');
 
     const scene = document.querySelector('a-scene');
     const overlayVideo = document.getElementById('ov');
 
     function setState(t){ st.textContent = 'state: ' + t; }
-    function setErr(t){ er.textContent = 'error: ' + t; }
-    function setMsg(t){ msg.textContent = t; }
+    function addLog(t){
+      const now = new Date().toLocaleTimeString();
+      log.textContent += `[${now}] ${t}\n`;
+      log.scrollTop = log.scrollHeight;
+    }
+
+    function getEnvLabel(){
+      const ua = navigator.userAgent || '';
+      const inApp =
+        /Line|FBAN|FBAV|Instagram|Twitter|GSA|MicroMessenger/i.test(ua);
+      return (inApp ? 'in-app-webview疑い' : 'browser') + ' / ' + (ua.includes('iPhone') ? 'iPhone' : ua.includes('Android') ? 'Android' : 'Other');
+    }
+
+    function webglOk(){
+      try{
+        const c = document.createElement('canvas');
+        return !!(c.getContext('webgl') || c.getContext('experimental-webgl'));
+      }catch(_){ return false; }
+    }
 
     async function exists(url){
       try{
@@ -80,78 +114,105 @@
       }
     }
 
-    // 1) ページ読み込み直後：ファイル存在チェック→MindARの準備完了待ち
+    function dumpError(e){
+      if (!e) return 'unknown error';
+      const name = e.name || 'Error';
+      const msg = e.message || String(e);
+      const stack = e.stack ? `\nSTACK:\n${e.stack}` : '';
+      return `${name}: ${msg}${stack}`;
+    }
+
     window.addEventListener('load', async () => {
+      env.textContent = 'env: ' + getEnvLabel();
       setState('checking');
 
-      // ファイル存在確認（ここで原因を潰す）
+      addLog('secureContext: ' + (window.isSecureContext ? 'true' : 'false'));
+      addLog('mediaDevices: ' + (!!navigator.mediaDevices));
+      addLog('getUserMedia: ' + (!!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)));
+      addLog('WebGL: ' + (webglOk() ? 'OK' : 'NG'));
+      addLog('AFRAME: ' + (window.AFRAME ? 'OK' : 'NG'));
+      addLog('MINDAR: ' + (window.MINDAR ? 'OK' : 'NG'));
+
       const okMind = await exists('./targets.mind');
       const okMp4  = await exists('./overlay.mp4');
+      addLog('targets.mind: ' + (okMind ? 'OK' : 'NOT FOUND'));
+      addLog('overlay.mp4: ' + (okMp4 ? 'OK' : 'NOT FOUND'));
 
-      if (!okMind) {
+      if (!window.isSecureContext) { setState('blocked'); addLog('NG: https ではありません'); return; }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         setState('blocked');
-        setErr('targets.mind not found');
-        setMsg('targets.mind が見つかりません（index.htmlと同じ階層に置いてください）');
+        addLog('NG: getUserMediaが使えません（アプリ内ブラウザの可能性大）');
         return;
       }
-      if (!okMp4) {
-        setState('blocked');
-        setErr('overlay.mp4 not found');
-        setMsg('overlay.mp4 が見つかりません（index.htmlと同じ階層に置いてください）');
-        return;
-      }
+      if (!webglOk()) { setState('blocked'); addLog('NG: WebGLが無効'); return; }
+      if (!okMind || !okMp4) { setState('blocked'); addLog('NG: 必要ファイル不足'); return; }
 
-      // A-Frameの初期化が終わるまで待つ（ここがTypeError対策の本丸）
+      // A-Frameの初期化を待つ
       scene.addEventListener('loaded', () => {
-        // mindar-image コンポーネントが載るまで少し待つ
-        const waitMindar = setInterval(() => {
+        // mindar-image が載るまで待つ
+        const timer = setInterval(() => {
           const mindar = scene.components && scene.components['mindar-image'];
           if (mindar && typeof mindar.start === 'function') {
-            clearInterval(waitMindar);
+            clearInterval(timer);
             setState('ready');
-            setErr('-');
-            setMsg('準備OK。「開始」を押してください。');
+            addLog('MindAR component ready');
             startBtn.disabled = false;
           }
         }, 100);
+
         setTimeout(() => {
           if (startBtn.disabled) {
             setState('timeout');
-            setErr('mindar init timeout');
-            setMsg('MindARの初期化に失敗しました。通信制限/読み込みブロックの可能性があります。');
+            addLog('MindAR init timeout（CDNブロック/互換性問題の可能性）');
           }
         }, 8000);
       });
     });
 
-    // 2) 開始ボタン：ユーザー操作の中で start する
     startBtn.addEventListener('click', async () => {
+      setState('starting');
+      addLog('start clicked');
+
+      // 先に「普通のカメラ」が取れるか診断（ここで落ちるとMindAR以前）
+      let preStream = null;
       try{
-        setState('starting');
-        setErr('-');
-        setMsg('起動中…（カメラ許可が出たら許可してください）');
+        preStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio:false });
+        addLog('getUserMedia preflight: OK');
+        // すぐ止める（MindARが使うため）
+        preStream.getTracks().forEach(t => t.stop());
+        preStream = null;
+      }catch(e){
+        addLog('getUserMedia preflight FAILED:\n' + dumpError(e));
+        setState('failed');
+        return;
+      }
 
-        // iOS対策：ユーザー操作中に動画再生トライ（失敗してもOK）
-        try { await overlayVideo.play(); } catch(_){}
+      // iOS対策：ユーザー操作中に動画再生トライ（失敗してもOK）
+      try { await overlayVideo.play(); addLog('overlay play() OK'); }
+      catch(e){ addLog('overlay play() failed (ignore): ' + dumpError(e)); }
 
+      // MindAR start
+      try{
         const mindar = scene.components['mindar-image'];
+        addLog('mindar.start() calling...');
         await mindar.start();
-
-        // 起動成功
+        addLog('mindar.start() OK');
         ui.style.display = 'none';
         setState('running');
-
       }catch(e){
+        addLog('mindar.start() FAILED:\n' + dumpError(e));
         setState('failed');
-        setErr(e?.name || String(e));
-        setMsg('起動失敗：' + (e?.name || e));
       }
     });
 
-    // 認識イベント（成功確認）
     scene.addEventListener('targetFound', async () => {
-      try { await overlayVideo.play(); } catch(_){}
+      addLog('targetFound');
+      try { await overlayVideo.play(); } catch(_) {}
     });
+    scene.addEventListener('targetLost', () => addLog('targetLost'));
+
+    setState('boot');
+    addLog('boot...');
   </script>
 </body>
 </html>
