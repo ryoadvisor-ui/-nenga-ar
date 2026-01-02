@@ -1,122 +1,80 @@
 <!doctype html>
 <html lang="ja">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>年賀AR（カメラ安定 + PNG）</title>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>年賀AR（本番）</title>
 
-  <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
-  <script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
+<script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
+<script src="https://raw.githack.com/AR-js-org/AR.js/master/aframe/build/aframe-ar.js"></script>
 
-  <style>
-    html, body { margin:0; height:100%; overflow:hidden; background:#000; }
+<style>
+html, body { margin:0; height:100%; overflow:hidden; background:#000; }
 
-    /* ✅ カメラ映像：歪ませず画面に収める（あなたの希望） */
-    video.arjs-video {
-      position: fixed !important;
-      inset: 0 !important;
-      width: 100vw !important;
-      height: 100vh !important;
-      object-fit: contain !important;  /* ★最重要：歪み/四辺変形/異常ズームを抑える */
-      background: #000 !important;
-      z-index: 0 !important;
-    }
+/* カメラ映像を「歪ませず」画面に収める */
+video.arjs-video {
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  object-fit: contain !important;
+  background: #000 !important;
+  z-index: 0 !important;
+}
 
-    /* canvasは触りすぎない（黒画面の元）。前面には置く */
-    canvas.a-canvas { z-index: 1 !important; }
+canvas.a-canvas { z-index: 1 !important; }
 
-    .ui {
-      position: fixed;
-      left: 0; right: 0; top: 0;
-      padding: 10px 12px;
-      background: rgba(0,0,0,0.6);
-      color: #fff;
-      font: 14px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif;
-      z-index: 10;
-    }
-    .ui small { opacity: 0.85; display:block; margin-top:4px; }
-    .ok { color:#7CFF7C; }
-    .ng { color:#FF7C7C; }
-  </style>
+.ui {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  padding: 10px;
+  background: rgba(0,0,0,0.6);
+  color: #fff;
+  font-family: system-ui, sans-serif;
+  z-index: 10;
+}
+</style>
 </head>
 
 <body>
-  <div class="ui" id="ui">
-    <div>① カメラ許可 → ② <b>Hiroマーカー</b>にかざす</div>
-    <small id="stat">PNG: 読み込み中…</small>
-  </div>
+<div class="ui">
+  カメラ許可 → Hiroマーカーにかざしてください
+</div>
 
-  <a-scene
-    embedded
-    vr-mode-ui="enabled: false"
-    renderer="antialias: true; colorManagement: true;"
-    arjs="
-      sourceType: webcam;
-      facingMode: environment;
-      debugUIEnabled: false;
-      sourceWidth: 1280; sourceHeight: 720;
-    "
-  >
-    <!-- ✅ FOVを固定して「過剰な広角/ズーム感」を抑える -->
-    <a-entity camera="fov: 70;"></a-entity>
+<a-scene
+  embedded
+  vr-mode-ui="enabled:false"
+  renderer="antialias:true; colorManagement:true;"
+  arjs="
+    sourceType:webcam;
+    facingMode:environment;
+    debugUIEnabled:false;
+    sourceWidth:1280;
+    sourceHeight:720;
+  "
+>
+  <a-entity camera="fov:70"></a-entity>
 
-    <!-- ✅ PNGの読み込みを“二段構え”にする（失敗してもどちらかで出す） -->
-    <a-assets timeout="8000">
-      <!-- ルートにある前提。キャッシュ回避で ?v= を付ける -->
-      <img id="ov" src="./overlay.png?v=3" crossorigin="anonymous" />
-    </a-assets>
+  <a-assets>
+    <img id="img" src="./overlay.png?v=1">
+  </a-assets>
 
-    <a-marker preset="hiro">
-      <!-- (A) a-assets参照（基本はこちら） -->
-      <a-plane
-        id="p1"
-        position="0 0 0"
-        rotation="-90 0 0"
-        width="1.4"
-        height="1.4"
-        material="src: #ov; transparent: true; opacity: 1; alphaTest: 0.05; side: double; color: white;"
-      ></a-plane>
+  <a-marker preset="hiro">
+    <a-plane
+      position="0 0 0"
+      rotation="-90 0 0"
+      width="1.4"
+      height="1.4"
+      material="
+        src:#img;
+        transparent:true;
+        opacity:1;
+        side:double;
+      "
+    ></a-plane>
+  </a-marker>
 
-      <!-- (B) 直src参照（assetsがコケた時の保険） -->
-      <a-plane
-        id="p2"
-        position="0 0.001 0"  <!-- ほんの少し上にずらしてZ-fighting回避 -->
-        rotation="-90 0 0"
-        width="1.4"
-        height="1.4"
-        visible="false"
-        material="src: ./overlay.png?v=3; transparent: true; opacity: 1; alphaTest: 0.05; side: double; color: white;"
-      ></a-plane>
-    </a-marker>
-
-    <a-entity light="type: ambient; intensity: 0.95"></a-entity>
-  </a-scene>
-
-  <script>
-    const stat = document.getElementById('stat');
-    const img = document.querySelector('#ov');
-
-    // a-assetsでの読み込み状況表示
-    img.addEventListener('load', () => {
-      stat.innerHTML = 'PNG: <span class="ok">OK（assetsで読み込み）</span> そのままマーカーへ';
-      // assetsでOKなら保険は不要
-      const p2 = document.getElementById('p2');
-      if (p2) p2.setAttribute('visible', false);
-    });
-
-    img.addEventListener('error', () => {
-      stat.innerHTML = 'PNG: <span class="ng">assets失敗</span> → 直src保険を使用中（それでも出なければパス問題）';
-      const p2 = document.getElementById('p2');
-      if (p2) p2.setAttribute('visible', true);
-    });
-
-    // さらに念のため：8秒経ってもload/errorが来ない場合
-    setTimeout(() => {
-      const t = stat.textContent || '';
-      if (t.includes('読み込み中')) {
-        stat.innerHTML = 'PNG: <span class="ng">反応なし</span>（キャッシュ/通信/パス）→ URL末尾に ?v=99 を付けて再読込';
-      }
-    }, 9000);
-  </script>
+  <a-entity light="type:ambient; intensity:1"></a-entity>
+</a-scene>
 </body>
 </html>
