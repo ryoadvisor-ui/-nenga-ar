@@ -3,56 +3,92 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>年賀状AR（QR + MP3 / Max Resolution）</title>
+<title>年賀状AR（QRトリガー / 500×740 固定表示）</title>
 
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
 <style>
 html,body{
-  margin:0;height:100%;overflow:hidden;background:#000;
+  margin:0; height:100%; overflow:hidden; background:#000;
   font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
 }
+
+/* カメラ（背景） */
 #cam{
-  position:fixed;inset:0;
-  width:100%;height:100%;
-  object-fit:cover; /* 表示はこれが限界 */
+  position:fixed; inset:0;
+  width:100%; height:100%;
+  object-fit:cover;
   background:#000;
 }
+
+/* 中央に“年賀状比率”で固定表示する動画（歪みゼロ） */
 #overlay{
   position:fixed;
-  transform-origin:0 0;
+  left:50%;
+  top:48%;                          /* 少し上寄せ（好みで調整可） */
+  transform:translate(-50%,-50%);
+  height:min(72vh, 740px);          /* 高さ基準で安定 */
+  aspect-ratio: 500 / 740;          /* ★ 500×740 ぴったり */
   display:none;
   pointer-events:none;
+  filter: drop-shadow(0 6px 18px rgba(0,0,0,.45));
+  border-radius: 10px;
 }
+
+/* 起動UI */
 #ui{
-  position:fixed;inset:0;z-index:10;
-  display:flex;align-items:center;justify-content:center;
+  position:fixed; inset:0; z-index:10;
+  display:flex; align-items:center; justify-content:center;
   background:rgba(0,0,0,.85);
 }
+#panel{
+  width:min(92vw, 520px);
+  color:#fff; text-align:left;
+}
 button{
-  font-size:18px;font-weight:900;
-  padding:16px 24px;border-radius:14px;border:0;
+  width:100%;
+  font-size:18px; font-weight:900;
+  padding:16px 18px; border-radius:14px; border:0;
 }
-#info{
-  position:fixed;left:8px;bottom:8px;
-  color:#0f0;font-size:12px;
-  background:rgba(0,0,0,.6);
-  padding:6px 8px;border-radius:6px;
+#hint{
+  margin-top:10px; opacity:.85; font-size:13px; line-height:1.4;
 }
-canvas{display:none}
+#status{
+  margin-top:10px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size:12px;
+  background:rgba(255,255,255,0.06);
+  border:1px solid rgba(255,255,255,0.15);
+  border-radius:12px;
+  padding:10px;
+  white-space:pre-wrap;
+}
+
+canvas{ display:none }
 </style>
 </head>
 
 <body>
 
 <video id="cam" autoplay muted playsinline></video>
-<video id="overlay" src="./overlay.mp4" loop muted playsinline></video>
+
+<!-- 中央表示動画（500×740） -->
+<video id="overlay" src="./overlay.mp4" loop muted playsinline webkit-playsinline></video>
+
+<!-- 同時再生音声 -->
 <audio id="snd" src="./sound.mp3" preload="auto"></audio>
 
 <div id="ui">
-  <button id="start">開始</button>
+  <div id="panel">
+    <button id="start">開始（カメラ許可）</button>
+    <div id="hint">
+      1) 「開始」を押す<br>
+      2) 年賀状の左下のQRを一度だけ映す<br>
+      3) 中央の動画（500×740）＋音声が再生されます
+    </div>
+    <div id="status">state: idle</div>
+  </div>
 </div>
-<div id="info">res: -</div>
 
 <canvas id="cv"></canvas>
 
@@ -61,73 +97,27 @@ const cam = document.getElementById('cam');
 const ov  = document.getElementById('overlay');
 const snd = document.getElementById('snd');
 const ui  = document.getElementById('ui');
-const info= document.getElementById('info');
 const cv  = document.getElementById('cv');
-const ctx = cv.getContext('2d',{willReadFrequently:true});
+const ctx = cv.getContext('2d', { willReadFrequently:true });
+const statusEl = document.getElementById('status');
 
 let running=false;
-let lastQuad=null;
-let lastSeen=0;
-let frame=0;
+let scanning=false;
 let audioReady=false;
 let audioPlaying=false;
 
-const HOLD_MS = 1500;
-const SMOOTH = 0.25;
-const DETECT_EVERY = 3;
+/* QR検出の軽量設定 */
+const DETECT_EVERY = 2;   // 2～3 推奨
+let frame=0;
 
-function lerp(a,b,t){return a+(b-a)*t;}
-function smoothQuad(p,n){
-  if(!p) return n;
-  return p.map((v,i)=>({
-    x: lerp(v.x,n[i].x,SMOOTH),
-    y: lerp(v.y,n[i].y,SMOOTH)
-  }));
-}
+/* 特定のQRだけ反応させたい場合は文字列を入れる
+   例: const EXPECT_QR_TEXT = "NENGA2026";
+   null のままなら「どのQRでもOK」 */
+const EXPECT_QR_TEXT = null;
 
-function mapPoint(p, sw, sh){
-  const vw=cam.videoWidth, vh=cam.videoHeight;
-  const W=innerWidth, H=innerHeight;
-  const arV=vw/vh, arS=W/H;
-  let dw,dh,ox,oy;
-  if(arV>arS){
-    dh=H; dw=H*arV; ox=(W-dw)/2; oy=0;
-  }else{
-    dw=W; dh=W/arV; ox=0; oy=(H-dh)/2;
-  }
-  return { x:ox+(p.x/sw)*dw, y:oy+(p.y/sh)*dh };
-}
+function log(t){ statusEl.textContent = t; }
 
-function applyQuad(el,q){
-  const w=el.videoWidth||200,h=el.videoHeight||200;
-  const src=[[0,0],[w,0],[w,h],[0,h]];
-  const A=[],B=[];
-  for(let i=0;i<4;i++){
-    const [x,y]=src[i],X=q[i].x,Y=q[i].y;
-    A.push([x,y,1,0,0,0,-x*X,-y*X]); B.push(X);
-    A.push([0,0,0,x,y,1,-x*Y,-y*Y]); B.push(Y);
-  }
-  const M=A.map((r,i)=>r.concat([B[i]]));
-  for(let i=0;i<8;i++){
-    let m=i;
-    for(let j=i+1;j<8;j++) if(Math.abs(M[j][i])>Math.abs(M[m][i])) m=j;
-    [M[i],M[m]]=[M[m],M[i]];
-    const p=M[i][i]||1e-9;
-    for(let j=i;j<9;j++) M[i][j]/=p;
-    for(let j=0;j<8;j++) if(j!==i){
-      const f=M[j][i];
-      for(let k=i;k<9;k++) M[j][k]-=f*M[i][k];
-    }
-  }
-  const h0=M.map(r=>r[8]);
-  const [a,c,e,b,d,f,g,h_]=h0;
-  el.style.transform =
-    `matrix3d(${a},${b},0,${g},
-              ${c},${d},0,${h_},
-              0,0,1,0,
-              ${e},${f},0,1)`;
-}
-
+/* 音声の事前アンロック */
 async function armAudio(){
   try{
     snd.currentTime=0;
@@ -138,46 +128,46 @@ async function armAudio(){
   }catch(e){}
 }
 
-async function getStreamMax(){
+/* 可能な限り高解像度を要求（端末依存） */
+async function getStreamBestEffort(){
   const tries = [
-    // 4K exact
     { video:{ facingMode:{ideal:'environment'}, width:{exact:3840}, height:{exact:2160} }, audio:false },
-    // 1080p min
     { video:{ facingMode:{ideal:'environment'}, width:{min:1920}, height:{min:1080} }, audio:false },
-    // 1080p ideal
     { video:{ facingMode:{ideal:'environment'}, width:{ideal:1920}, height:{ideal:1080} }, audio:false },
+    { video:{ facingMode:{ideal:'environment'} }, audio:false },
   ];
   for(const c of tries){
-    try{
-      return await navigator.mediaDevices.getUserMedia(c);
-    }catch(e){}
+    try{ return await navigator.mediaDevices.getUserMedia(c); }catch(e){}
   }
-  // 最後の保険
-  return await navigator.mediaDevices.getUserMedia({ video:{ facingMode:{ideal:'environment'} }, audio:false });
+  return await navigator.mediaDevices.getUserMedia({ video:true, audio:false });
 }
 
 async function start(){
-  const stream = await getStreamMax();
+  log("state: starting...");
+  const stream = await getStreamBestEffort();
   cam.srcObject = stream;
   await cam.play();
 
   const track = stream.getVideoTracks()[0];
-  const s = track.getSettings();
-  info.textContent = `res: ${s.width} x ${s.height}`;
+  const s = track.getSettings?.() || {};
+  log(`state: camera ok (${s.width||"?"}x${s.height||"?"}) / scanning qr...`);
 
+  /* overlay は検出後に表示 */
   try{ await ov.play(); }catch(_){}
-  ov.pause(); ov.currentTime=0;
+  ov.pause(); ov.currentTime=0; ov.style.display="none";
 
   await armAudio();
 
-  ui.style.display='none';
+  ui.style.display="none";
   running=true;
-  tick();
+  scanning=true;
+  requestAnimationFrame(tick);
 }
 
-function onFound(){
-  if(ov.style.display!=='block'){
-    ov.style.display='block';
+function playAR(){
+  if(ov.style.display!=="block"){
+    ov.style.display="block";
+    ov.currentTime=0;
     ov.play().catch(()=>{});
   }
   if(audioReady && !audioPlaying){
@@ -185,42 +175,26 @@ function onFound(){
     snd.play().then(()=>audioPlaying=true).catch(()=>{});
   }
 }
-function onLost(){
-  ov.pause(); ov.currentTime=0; ov.style.display='none';
-  if(audioPlaying){
-    snd.pause(); snd.currentTime=0; audioPlaying=false;
-  }
-}
 
 function tick(){
   if(!running) return;
   frame++;
 
-  if(cam.videoWidth && frame % DETECT_EVERY === 0){
-    const sw=360;
-    const sh=Math.round(cam.videoHeight*(sw/cam.videoWidth));
+  if(cam.videoWidth && scanning && frame % DETECT_EVERY === 0){
+    /* 検出は軽量化のため縮小（表示品質とは無関係） */
+    const sw = 420; // 鈍さ対策で少し大きめ
+    const sh = Math.round(cam.videoHeight * (sw / cam.videoWidth));
     cv.width=sw; cv.height=sh;
     ctx.drawImage(cam,0,0,sw,sh);
-    const img=ctx.getImageData(0,0,sw,sh);
-    const code = jsQR(img.data, sw, sh, { inversionAttempts:'attemptBoth' });
-    if(code){
-      const l=code.location;
-      const q=[
-        mapPoint(l.topLeftCorner,sw,sh),
-        mapPoint(l.topRightCorner,sw,sh),
-        mapPoint(l.bottomRightCorner,sw,sh),
-        mapPoint(l.bottomLeftCorner,sw,sh)
-      ];
-      lastQuad=smoothQuad(lastQuad,q);
-      lastSeen=performance.now();
-    }
-  }
+    const img = ctx.getImageData(0,0,sw,sh);
 
-  if(lastQuad && performance.now()-lastSeen < HOLD_MS){
-    applyQuad(ov,lastQuad);
-    onFound();
-  }else{
-    onLost();
+    const code = jsQR(img.data, sw, sh, { inversionAttempts:"attemptBoth" });
+    if(code){
+      if(EXPECT_QR_TEXT===null || (code.data||"").trim()===EXPECT_QR_TEXT){
+        playAR();
+        scanning=false; // 一度読めたら終了（安定）
+      }
+    }
   }
 
   requestAnimationFrame(tick);
