@@ -3,254 +3,102 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>年賀状AR（MindAR）</title>
+  <title>年賀状AR</title>
 
   <script src="https://aframe.io/releases/1.5.0/aframe.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/mind-ar@1.2.5/dist/mindar-image-aframe.prod.js"></script>
 
   <style>
     html, body { margin:0; height:100%; overflow:hidden; background:#000; }
-    a-scene { position:fixed; inset:0; }
-
-    /* VRボタン全殺し */
-    .a-enter-vr,.a-enter-ar,.a-enter-xr,
-    .a-enter-vr-button,.a-enter-ar-button,.a-enter-xr-button,
-    [class*="enter-vr"],[class*="enter-ar"],[class*="enter-xr"]{
-      display:none !important; visibility:hidden !important; opacity:0 !important;
+    /* VR / XR ボタン完全排除 */
+    .a-enter-vr, .a-enter-ar, .a-enter-xr,
+    .a-enter-vr-button, .a-enter-ar-button, .a-enter-xr-button {
+      display:none !important;
     }
-
     #ui{
-      position:fixed; inset:0; z-index:9999;
+      position:fixed; inset:0; z-index:10;
       display:flex; align-items:center; justify-content:center;
-      flex-direction:column; gap:10px;
-      background:rgba(0,0,0,.82); color:#fff;
-      font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
-      padding:16px; text-align:left;
+      background:rgba(0,0,0,.85);
+      color:#fff; font-family:system-ui;
     }
     button{
-      padding:12px 16px; border:0; border-radius:12px;
-      font-size:16px; font-weight:800;
-      width:100%; max-width:360px;
-    }
-    button:disabled{ opacity:.45; }
-    .box{ width:100%; max-width:360px; }
-    .pill{
-      display:inline-block; padding:2px 8px;
-      border:1px solid rgba(255,255,255,.35);
-      border-radius:999px; font-size:12px; opacity:.9;
-    }
-    #bar{ display:flex; gap:8px; flex-wrap:wrap; }
-    #log{
-      width:100%; max-width:360px; height:260px; overflow:auto;
-      background:rgba(255,255,255,0.06);
-      border:1px solid rgba(255,255,255,0.18);
-      border-radius:12px;
-      padding:10px;
-      font-size:12px; line-height:1.45;
-      white-space:pre-wrap; word-break:break-word;
+      padding:16px 20px;
+      font-size:18px; font-weight:800;
+      border-radius:14px; border:0;
     }
   </style>
 </head>
 
 <body>
-  <div id="ui">
-    <div class="box"><b>年賀状AR（MindAR）診断</b></div>
 
-    <div class="box" id="bar">
-      <span class="pill" id="st">state: boot</span>
-      <span class="pill" id="env">env: -</span>
-      <span class="pill" id="mode">mode: -</span>
-    </div>
+<div id="ui">
+  <button id="startBtn">はじめる</button>
+</div>
 
-    <div class="box" style="opacity:.9;font-size:13px;">
-      「開始」を押しても黒い場合はログを貼ってください。<br>
-      ※GitHub Pagesはキャッシュが強いので URL に <b>?v=数字</b> を付けて開くのが確実。
-    </div>
+<a-scene
+  vr-mode-ui="enabled:false"
+  device-orientation-permission-ui="enabled:false"
+  renderer="
+    antialias: true;
+    alpha: true;
+    physicallyCorrectLights: false;
+    colorManagement: false;
+    logarithmicDepthBuffer: false;
+  "
+  mindar-image="
+    imageTargetSrc: ./targets.mind;
+    autoStart: false;
+    uiScanning: false;
+    uiLoading: false;
+  ">
 
-    <button id="startBtn" disabled>開始（診断込み）</button>
-    <div id="log"></div>
-  </div>
+  <a-assets>
+    <video
+      id="ov"
+      src="./overlay.mp4"
+      loop
+      muted
+      playsinline
+      webkit-playsinline>
+    </video>
+  </a-assets>
 
-  <a-scene
-    embedded
-    vr-mode-ui="enabled:false"
-    xr-mode-ui="enabled:false"
-    device-orientation-permission-ui="enabled:false"
-    loading-screen="enabled:false"
-    renderer="colorManagement:true"
-    mindar-image="imageTargetSrc: ./targets.mind; autoStart:false; uiScanning:false; uiLoading:false;">
+  <a-entity mindar-image-target="targetIndex:0">
+    <a-video
+      src="#ov"
+      width="1.0"
+      height="0.56">
+    </a-video>
+  </a-entity>
 
-    <a-assets>
-      <video id="ov" src="./overlay.mp4" loop muted playsinline webkit-playsinline crossorigin="anonymous"></video>
-    </a-assets>
+  <!-- ⚠️ 通常の a-camera は使わない -->
+  <a-camera
+    look-controls="enabled:false"
+    position="0 0 0">
+  </a-camera>
 
-    <a-entity mindar-image-target="targetIndex:0">
-      <a-video src="#ov" width="1.0" height="0.56"></a-video>
-    </a-entity>
+</a-scene>
 
-    <a-camera position="0 0 0" look-controls="enabled:false"></a-camera>
-  </a-scene>
+<script>
+  const btn = document.getElementById('startBtn');
+  const ui  = document.getElementById('ui');
+  const scene = document.querySelector('a-scene');
+  const ov = document.getElementById('ov');
 
-  <script>
-    const st = document.getElementById('st');
-    const env = document.getElementById('env');
-    const modeEl = document.getElementById('mode');
-    const log = document.getElementById('log');
-    const btn = document.getElementById('startBtn');
+  btn.onclick = async () => {
+    try {
+      // iOS 対策：ユーザー操作で video を触る
+      try { await ov.play(); } catch(_) {}
 
-    const scene = document.querySelector('a-scene');
-    const ov = document.getElementById('ov');
+      const sys = scene.systems["mindar-image-system"];
+      await sys.start();
 
-    function add(t){
-      const d=new Date();
-      const ts = String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');
-      log.textContent += `[${ts}] ${t}\n`;
-      log.scrollTop = log.scrollHeight;
+      ui.style.display = "none";
+    } catch(e) {
+      alert("起動失敗：" + e.message);
     }
-    function setS(t){ st.textContent = 'state: ' + t; }
+  };
+</script>
 
-    function inAppUA(){
-      const ua = navigator.userAgent || '';
-      return /Line|FBAN|FBAV|Instagram|Twitter|GSA|MicroMessenger/i.test(ua);
-    }
-    function webglOK(){
-      try{
-        const c=document.createElement('canvas');
-        return !!(c.getContext('webgl')||c.getContext('experimental-webgl'));
-      }catch(_){return false;}
-    }
-
-    function killVRButtons(){
-      document.querySelectorAll('.a-enter-vr,.a-enter-ar,.a-enter-xr,.a-enter-vr-button,.a-enter-ar-button,.a-enter-xr-button')
-        .forEach(el => el.remove());
-    }
-
-    window.addEventListener('error', (ev) => {
-      add('[window.error] ' + (ev.message || ev.error));
-      if (ev.error && ev.error.stack) add(ev.error.stack);
-    });
-    window.addEventListener('unhandledrejection', (ev) => {
-      add('[unhandledrejection] ' + (ev.reason?.message || ev.reason));
-      if (ev.reason && ev.reason.stack) add(ev.reason.stack);
-    });
-
-    async function fetchCheck(){
-      try{
-        const r = await fetch('./targets.mind', {cache:'no-store'});
-        add('targets.mind: ' + (r.ok ? 'OK' : ('NG ' + r.status)));
-      }catch(e){ add('targets.mind: fetch ERROR ' + (e?.message||e)); }
-
-      try{
-        const r = await fetch('./overlay.mp4', {cache:'no-store'});
-        add('overlay.mp4: ' + (r.ok ? 'OK' : ('NG ' + r.status)));
-      }catch(e){ add('overlay.mp4: fetch ERROR ' + (e?.message||e)); }
-    }
-
-    // ★ ここが肝：どの環境でも start() を掴む
-    function resolveStarter(){
-      // 1) system（Androidで多い）
-      const sys = scene.systems && scene.systems["mindar-image-system"];
-      if (sys && typeof sys.start === 'function') return { mode:'system', start: () => sys.start() };
-
-      // 2) component（環境によってはこっち）
-      const comp = scene.components && scene.components["mindar-image"];
-      if (comp && typeof comp.start === 'function') return { mode:'component', start: () => comp.start() };
-
-      // 3) 念のため属性から（万一遅延してる場合に再解決できるよう）
-      return null;
-    }
-
-    function enableButton(modeText){
-      btn.disabled = false;
-      if (modeText) modeEl.textContent = 'mode: ' + modeText;
-      setS('ready');
-      add('start button enabled');
-    }
-
-    async function doStart(){
-      setS('starting');
-      add('start tapped');
-
-      killVRButtons();
-
-      // iOS対策：overlayをユーザー操作で触る
-      try { await ov.play(); add('overlay.play(): OK'); }
-      catch(e){ add('overlay.play(): NG ' + (e?.message||e)); }
-
-      // 開始押下時に改めて start() を探す（押せない問題の根絶）
-      const starter = resolveStarter();
-      if (!starter) {
-        add('ERROR: MindAR start() not ready at tap');
-        add('debug systems=' + Object.keys(scene.systems||{}).join(','));
-        add('debug components=' + Object.keys(scene.components||{}).join(','));
-        setS('failed');
-        return;
-      }
-
-      modeEl.textContent = 'mode: ' + starter.mode;
-      add('mindar.start() calling...');
-      await starter.start();
-      add('mindar.start(): OK');
-      setS('running');
-
-      // 診断中はUIを残す（黒になってもログが見える）
-      add('NOTE: If screen becomes black, keep UI and send this log.');
-    }
-
-    // ---- boot ----
-    window.addEventListener('load', async ()=>{
-      setInterval(killVRButtons, 400);
-
-      env.textContent = 'env: ' + (inAppUA() ? 'in-app-webview' : 'browser/Other');
-      add('boot...');
-      add('secureContext: ' + window.isSecureContext);
-      add('mediaDevices: ' + !!navigator.mediaDevices);
-      add('getUserMedia: ' + !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
-      add('WebGL: ' + (webglOK() ? 'OK' : 'NG'));
-      add('AFRAME: ' + (window.AFRAME ? 'OK' : 'NG'));
-      add('MINDAR: ' + (window.MINDAR ? 'OK' : 'NG'));
-      await fetchCheck();
-
-      // scene loaded 待ち
-      const onSceneReady = ()=>{
-        add('scene.loaded fired (hasLoaded=' + scene.hasLoaded + ')');
-        setS('checking');
-
-        // まずは普通に start() を待つ
-        const startedAt = Date.now();
-        const timer = setInterval(()=>{
-          const starter = resolveStarter();
-          if (starter) {
-            clearInterval(timer);
-            add('mindar: ' + starter.mode + '.start detected');
-            enableButton(starter.mode);
-          } else if (Date.now() - startedAt > 1500) {
-            // ★ここが“押せない問題の根絶”：
-            // start検出できなくても、押下時に再解決するのでボタンは解放する
-            clearInterval(timer);
-            add('mindar.start not detected yet → force enable button (tap will re-resolve)');
-            enableButton('unknown');
-          }
-        }, 100);
-
-        // 念のため：2.5秒で必ず解放（端末差吸収）
-        setTimeout(()=>{
-          if (btn.disabled) {
-            add('force enable by timeout');
-            enableButton('timeout');
-          }
-        }, 2500);
-      };
-
-      if (scene.hasLoaded) onSceneReady();
-      else scene.addEventListener('loaded', onSceneReady, { once:true });
-
-      btn.addEventListener('click', ()=>{ doStart().catch(e=>{
-        add('ERROR: ' + (e?.message||e));
-        if (e?.stack) add(e.stack);
-        setS('failed');
-      })});
-    });
-  </script>
 </body>
 </html>
