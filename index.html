@@ -3,87 +3,69 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>カメラテスト</title>
+  <title>Camera Diagnose</title>
   <style>
-    html, body {
-      margin: 0;
-      height: 100%;
-      background: #000;
-      overflow: hidden;
-      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
-    }
-
-    /* 画面に「収める」：歪ませない。黒帯は出る */
-    video {
-      position: fixed;
-      inset: 0;
-      width: 100vw;
-      height: 100vh;
-      object-fit: contain; /* ← cover にすると全画面だがトリミング */
-      background: #000;
-    }
-
-    .ui {
-      position: fixed;
-      left: 0; right: 0; top: 0;
-      padding: 10px 12px;
-      color: #fff;
-      background: rgba(0,0,0,0.55);
-      z-index: 10;
-      font-size: 14px;
-      line-height: 1.4;
-    }
-
-    .btns {
-      position: fixed;
-      left: 0; right: 0; bottom: 0;
-      display: flex;
-      gap: 8px;
-      padding: 10px 12px;
-      z-index: 10;
-      background: rgba(0,0,0,0.35);
-    }
-
-    button {
-      flex: 1;
-      padding: 12px 10px;
-      font-size: 16px;
-      border: 0;
-      border-radius: 12px;
-    }
+    html, body { margin: 0; height: 100%; background: #000; color: #fff; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+    #wrap { height: 100%; display: flex; flex-direction: column; }
+    #bar { padding: 10px 12px; background: rgba(0,0,0,0.6); }
+    #videoBox { flex: 1; display: flex; align-items: center; justify-content: center; }
+    video { max-width: 100%; max-height: 100%; background: #000; } /* ←固定やobject-fitを使わない（まず安全） */
+    button { margin-top: 8px; padding: 10px 12px; border: 0; border-radius: 10px; font-size: 16px; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .pill { display:inline-block; padding: 2px 8px; border: 1px solid rgba(255,255,255,0.35); border-radius: 999px; font-size: 12px; opacity: 0.9; }
   </style>
 </head>
 <body>
-  <div class="ui" id="msg">「開始」を押す → カメラ許可</div>
+  <div id="wrap">
+    <div id="bar">
+      <div id="msg">「開始」を押してください（ユーザー操作が必要）</div>
+      <div class="row">
+        <span class="pill" id="state">state: idle</span>
+        <span class="pill" id="dims">video: -</span>
+        <span class="pill" id="err">error: -</span>
+      </div>
+      <div class="row">
+        <button id="start">開始（背面優先）</button>
+        <button id="stop">停止</button>
+      </div>
+    </div>
 
-  <video id="v" playsinline muted></video>
-
-  <div class="btns">
-    <button id="start">開始（背面）</button>
-    <button id="toggle">表示：contain</button>
+    <div id="videoBox">
+      <video id="v" playsinline muted></video>
+    </div>
   </div>
 
   <script>
     const v = document.getElementById('v');
     const msg = document.getElementById('msg');
+    const state = document.getElementById('state');
+    const dims = document.getElementById('dims');
+    const err = document.getElementById('err');
     const startBtn = document.getElementById('start');
-    const toggleBtn = document.getElementById('toggle');
-
+    const stopBtn = document.getElementById('stop');
     let stream = null;
-    let fit = 'contain';
 
-    async function startCamera() {
+    function setState(s){ state.textContent = 'state: ' + s; }
+    function setErr(e){ err.textContent = 'error: ' + e; }
+
+    function updateDims() {
+      const w = v.videoWidth || 0;
+      const h = v.videoHeight || 0;
+      dims.textContent = `video: ${w}x${h}`;
+    }
+
+    async function start() {
+      setErr('-');
+      setState('starting');
+      msg.textContent = 'カメラ起動中…（許可が出たら許可）';
+
       try {
-        // 既に起動していたら止める
-        if (stream) {
-          stream.getTracks().forEach(t => t.stop());
-          stream = null;
-        }
+        if (stream) stream.getTracks().forEach(t => t.stop());
 
-        // 背面優先。端末によっては正確に指定できないが、まずこれが最善。
+        // まずは「背面優先 + 解像度は理想指定」だけ。強い指定はしない。
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: { ideal: "environment" },
+            facingMode: { ideal: 'environment' },
             width: { ideal: 1280 },
             height: { ideal: 720 }
           },
@@ -91,27 +73,42 @@
         });
 
         v.srcObject = stream;
+
+        // play失敗が黒画面の原因になるので、awaitで確実に拾う
         await v.play();
-        msg.textContent = "カメラ起動中（背面優先）。下のボタンで表示切替できます。";
+
+        setState('playing');
+        msg.textContent = 'OK：映像が出れば成功。黒くなったら error を見てください。';
+
       } catch (e) {
-        msg.textContent = "カメラ起動に失敗: " + (e && e.name ? e.name : e);
+        setState('failed');
+        setErr((e && e.name) ? e.name : String(e));
+        msg.textContent = '失敗：error を教えてください（例: NotAllowedError 等）';
       }
     }
 
-    function toggleFit() {
-      fit = (fit === 'contain') ? 'cover' : 'contain';
-      v.style.objectFit = fit;
-      toggleBtn.textContent = "表示：" + fit;
+    function stop() {
+      setState('stopped');
+      msg.textContent = '停止しました';
+      if (stream) stream.getTracks().forEach(t => t.stop());
+      stream = null;
+      v.srcObject = null;
     }
 
-    startBtn.addEventListener('click', startCamera);
-    toggleBtn.addEventListener('click', toggleFit);
+    // 状態監視：ここに原因が出ることが多い
+    v.addEventListener('loadedmetadata', updateDims);
+    v.addEventListener('resize', updateDims);
+    v.addEventListener('pause', () => { setState('paused'); msg.textContent = '一時停止（勝手に止まった可能性）'; });
+    v.addEventListener('error', () => { setErr('video_error'); });
 
-    // iOS対策：最初のユーザー操作が必要なので自動起動はしない
+    startBtn.addEventListener('click', start);
+    stopBtn.addEventListener('click', stop);
+
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
-      msg.textContent = "このブラウザはカメラAPIに対応していません（Safari/Chrome推奨）";
+      msg.textContent = 'このブラウザは getUserMedia に未対応です（Safari/Chrome推奨）';
+      setState('unsupported');
       startBtn.disabled = true;
-      toggleBtn.disabled = true;
+      stopBtn.disabled = true;
     }
   </script>
 </body>
