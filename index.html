@@ -2,81 +2,59 @@
 <html lang="ja">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Camera Hi-Res Test</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Camera Max Resolution Probe</title>
 
 <style>
 html,body{
   margin:0;
   height:100%;
   background:#000;
-  color:#fff;
-  font-family:system-ui,-apple-system,"Segoe UI",sans-serif;
-}
-#wrap{
-  height:100%;
-  display:flex;
-  flex-direction:column;
+  color:#0f0;
+  font-family:monospace;
 }
 #bar{
-  padding:10px;
-  background:rgba(0,0,0,.6);
-}
-#videoBox{
-  flex:1;
-  display:flex;
-  align-items:center;
-  justify-content:center;
+  padding:8px;
+  background:rgba(0,0,0,.7);
 }
 video{
-  max-width:100%;
-  max-height:100%;
-  background:#000;
-}
-button{
-  padding:12px;
-  font-size:16px;
-  margin-top:8px;
+  display:block;
+  margin:auto;
 }
 </style>
 </head>
 
 <body>
-<div id="wrap">
-  <div id="bar">
-    <div id="msg">開始を押してください（高解像度要求）</div>
-    <button id="start">開始</button>
-  </div>
-  <div id="videoBox">
-    <video id="v" playsinline muted></video>
-  </div>
+<div id="bar">
+  <div id="info">start</div>
+  <button id="start">開始</button>
 </div>
+
+<video id="v" playsinline muted></video>
 
 <script>
 const v = document.getElementById('v');
-const msg = document.getElementById('msg');
+const info = document.getElementById('info');
 const btn = document.getElementById('start');
-let stream=null;
 
 btn.onclick = async ()=>{
   try{
-    stream = await navigator.mediaDevices.getUserMedia({
+    const stream = await navigator.mediaDevices.getUserMedia({
       video:{
         facingMode:{ideal:'environment'},
-        width:{ min:1920, ideal:1920 },
-        height:{ min:1080, ideal:1080 }
+        width:{ exact:3840 },
+        height:{ exact:2160 }
       },
       audio:false
     });
     v.srcObject = stream;
     await v.play();
 
-    const track = stream.getVideoTracks()[0];
-    const s = track.getSettings();
-    msg.textContent = `映像OK / ${s.width}x${s.height}`;
-
+    const t = stream.getVideoTracks()[0];
+    const s = t.getSettings();
+    info.textContent = `GRANTED ${s.width} x ${s.height}`;
   }catch(e){
-    msg.textContent = 'ERROR: ' + e.name;
+    info.textContent = `FAILED: ${e.name}`;
   }
 };
 </script>
