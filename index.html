@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>年賀状AR（QR追従）</title>
+<title>年賀状AR（安定追従）</title>
 
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 
@@ -38,49 +38,56 @@ canvas{display:none}
 
 <video id="cam" autoplay muted playsinline></video>
 <video id="overlay" src="./overlay.mp4" loop muted playsinline></video>
-
 <div id="ui"><button id="start">開始</button></div>
 <canvas id="cv"></canvas>
 
 <script>
-const cam = document.getElementById('cam');
-const ov  = document.getElementById('overlay');
-const ui  = document.getElementById('ui');
-const cv  = document.getElementById('cv');
-const ctx = cv.getContext('2d',{willReadFrequently:true});
+const cam=document.getElementById('cam');
+const ov=document.getElementById('overlay');
+const ui=document.getElementById('ui');
+const cv=document.getElementById('cv');
+const ctx=cv.getContext('2d',{willReadFrequently:true});
 
 let running=false;
+let lastQuad=null;
 let lastSeen=0;
+let frame=0;
 
-function mapPoint(p, srcW, srcH){
-  const vw=cam.videoWidth, vh=cam.videoHeight;
-  const sw=innerWidth, sh=innerHeight;
-  const videoAR=vw/vh, screenAR=sw/sh;
-  let drawW,drawH,offX,offY;
-  if(videoAR>screenAR){
-    drawH=sh; drawW=sh*videoAR;
-    offX=(sw-drawW)/2; offY=0;
-  }else{
-    drawW=sw; drawH=sw/videoAR;
-    offX=0; offY=(sh-drawH)/2;
-  }
-  return {
-    x: offX + (p.x/srcW)*drawW,
-    y: offY + (p.y/srcH)*drawH
-  };
+// ===== 設定（ここだけ触ればOK） =====
+const HOLD_MS = 1500;     // 見失っても保持する時間
+const SMOOTH = 0.25;     // 追従の滑らかさ（0.1〜0.4）
+const DETECT_EVERY = 3;  // 何フレームに1回QR検出するか
+// ===================================
+
+function lerp(a,b,t){ return a+(b-a)*t; }
+function smoothQuad(prev,next){
+  if(!prev) return next;
+  return prev.map((p,i)=>({
+    x: lerp(p.x,next[i].x,SMOOTH),
+    y: lerp(p.y,next[i].y,SMOOTH)
+  }));
 }
 
-// 4点射影 → CSS matrix3d
-function applyQuad(el, quad){
-  const w=el.videoWidth||200;
-  const h=el.videoHeight||200;
-  const from=[
-    {x:0,y:0},{x:w,y:0},{x:w,y:h},{x:0,y:h}
-  ];
+function mapPoint(p, sw, sh){
+  const vw=cam.videoWidth, vh=cam.videoHeight;
+  const W=innerWidth, H=innerHeight;
+  const arV=vw/vh, arS=W/H;
+  let dw,dh,ox,oy;
+  if(arV>arS){
+    dh=H; dw=H*arV; ox=(W-dw)/2; oy=0;
+  }else{
+    dw=W; dh=W/arV; ox=0; oy=(H-dh)/2;
+  }
+  return { x:ox+(p.x/sw)*dw, y:oy+(p.y/sh)*dh };
+}
+
+// 射影変換
+function applyQuad(el,q){
+  const w=el.videoWidth||200,h=el.videoHeight||200;
+  const src=[[0,0],[w,0],[w,h],[0,h]];
   const A=[],B=[];
   for(let i=0;i<4;i++){
-    const x=from[i].x,y=from[i].y;
-    const X=quad[i].x,Y=quad[i].y;
+    const [x,y]=src[i],X=q[i].x,Y=q[i].y;
     A.push([x,y,1,0,0,0,-x*X,-y*X]); B.push(X);
     A.push([0,0,0,x,y,1,-x*Y,-y*Y]); B.push(Y);
   }
@@ -97,9 +104,7 @@ function applyQuad(el, quad){
     }
   }
   const h0=M.map(r=>r[8]);
-  const a=h0[0],c=h0[1],e=h0[2];
-  const b=h0[3],d=h0[4],f=h0[5];
-  const g=h0[6],h_=h0[7];
+  const [a,c,e,b,d,f,g,h_]=h0;
   el.style.transform=
     `matrix3d(${a},${b},0,${g}, ${c},${d},0,${h_}, 0,0,1,0, ${e},${f},0,1)`;
 }
@@ -119,30 +124,38 @@ async function start(){
 
 function tick(){
   if(!running) return;
-  if(cam.videoWidth){
-    const w=360;
-    const h=Math.round(cam.videoHeight*(w/cam.videoWidth));
-    cv.width=w; cv.height=h;
-    ctx.drawImage(cam,0,0,w,h);
-    const img=ctx.getImageData(0,0,w,h);
-    const code=jsQR(img.data,w,h);
+  frame++;
+
+  if(cam.videoWidth && frame % DETECT_EVERY === 0){
+    const sw=360;
+    const sh=Math.round(cam.videoHeight*(sw/cam.videoWidth));
+    cv.width=sw; cv.height=sh;
+    ctx.drawImage(cam,0,0,sw,sh);
+    const img=ctx.getImageData(0,0,sw,sh);
+    const code=jsQR(img.data,sw,sh);
+
     if(code){
-      lastSeen=performance.now();
-      const loc=code.location;
-      const q=[
-        mapPoint(loc.topLeftCorner,w,h),
-        mapPoint(loc.topRightCorner,w,h),
-        mapPoint(loc.bottomRightCorner,w,h),
-        mapPoint(loc.bottomLeftCorner,w,h),
+      const l=code.location;
+      const quad=[
+        mapPoint(l.topLeftCorner,sw,sh),
+        mapPoint(l.topRightCorner,sw,sh),
+        mapPoint(l.bottomRightCorner,sw,sh),
+        mapPoint(l.bottomLeftCorner,sw,sh)
       ];
-      ov.style.display='block';
-      applyQuad(ov,q);
-      if(ov.paused) ov.play();
-    }else if(performance.now()-lastSeen>400){
-      ov.pause(); ov.currentTime=0;
-      ov.style.display='none';
+      lastQuad=smoothQuad(lastQuad,quad);
+      lastSeen=performance.now();
     }
   }
+
+  if(lastQuad && performance.now()-lastSeen < HOLD_MS){
+    ov.style.display='block';
+    applyQuad(ov,lastQuad);
+    if(ov.paused) ov.play();
+  }else{
+    ov.pause();
+    ov.style.display='none';
+  }
+
   requestAnimationFrame(tick);
 }
 
