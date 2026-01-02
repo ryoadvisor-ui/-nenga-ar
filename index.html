@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<title>Camera Only Test</title>
+<title>Camera Hi-Res Test</title>
 
 <style>
 html,body{
@@ -44,7 +44,7 @@ button{
 <body>
 <div id="wrap">
   <div id="bar">
-    <div id="msg">開始を押してください</div>
+    <div id="msg">開始を押してください（高解像度要求）</div>
     <button id="start">開始</button>
   </div>
   <div id="videoBox">
@@ -63,14 +63,18 @@ btn.onclick = async ()=>{
     stream = await navigator.mediaDevices.getUserMedia({
       video:{
         facingMode:{ideal:'environment'},
-        width:{ideal:1280},
-        height:{ideal:720}
+        width:{ min:1920, ideal:1920 },
+        height:{ min:1080, ideal:1080 }
       },
       audio:false
     });
     v.srcObject = stream;
     await v.play();
-    msg.textContent = '映像が出ています';
+
+    const track = stream.getVideoTracks()[0];
+    const s = track.getSettings();
+    msg.textContent = `映像OK / ${s.width}x${s.height}`;
+
   }catch(e){
     msg.textContent = 'ERROR: ' + e.name;
   }
