@@ -1,13 +1,124 @@
 <!doctype html>
-<html>
+<html lang="ja">
 <head>
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<style>
-  body { margin:0; background:#000; display:flex; justify-content:center; align-items:center; height:100vh; }
-  img { max-width:80vw; border:2px solid red; }
-</style>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <title>PNGチェック（年賀）</title>
+
+  <style>
+    html, body { margin:0; height:100%; background:#000; color:#fff; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; }
+    .wrap { min-height:100%; display:flex; flex-direction:column; }
+    .bar {
+      padding:10px 12px;
+      background: rgba(0,0,0,0.65);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      border-bottom: 1px solid rgba(255,255,255,0.12);
+    }
+    .bar b { color: #fff; }
+    .pill {
+      display:inline-block;
+      padding: 2px 8px;
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 999px;
+      margin-right: 6px;
+      font-size: 12px;
+      opacity: 0.9;
+    }
+    .main {
+      flex:1;
+      display:flex;
+      align-items:center;
+      justify-content:center;
+      padding: 14px;
+    }
+    img {
+      max-width: 92vw;
+      max-height: 78vh;
+      border: 4px solid red;          /* 見えてるか一目で分かる */
+      background: rgba(255,255,255,0.06);
+    }
+    .btns {
+      padding: 10px 12px;
+      display:flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      border-top: 1px solid rgba(255,255,255,0.12);
+      background: rgba(0,0,0,0.65);
+    }
+    button {
+      padding: 10px 12px;
+      border: 0;
+      border-radius: 12px;
+      font-size: 14px;
+    }
+    a { color:#8ab4ff; }
+  </style>
 </head>
+
 <body>
-  <img src="overlay.png">
+<div class="wrap">
+  <div class="bar">
+    <div id="title"><b>PNG表示テスト</b></div>
+    <div>
+      <span class="pill" id="page">page: -</span>
+      <span class="pill" id="imgurl">img: -</span>
+      <span class="pill" id="status">status: loading</span>
+    </div>
+    <div style="margin-top:6px; font-size:12px; opacity:0.9;">
+      ここでPNGが出れば「ファイル配置・Pages配信」はOK。出なければパスかキャッシュ。
+    </div>
+  </div>
+
+  <div class="main">
+    <!-- ✅ 重要： ./ を付ける。さらにキャッシュ殺し用に ?v= を付ける -->
+    <img id="img" src="./overlay.png?v=2" alt="overlay">
+  </div>
+
+  <div class="btns">
+    <button id="reload">再読み込み（キャッシュ回避）</button>
+    <button id="try1">src=./overlay.png</button>
+    <button id="try2">src=overlay.png</button>
+    <button id="try3">src=nenga-ar/overlay.png</button>
+    <button id="try4">src=./nenga-ar/overlay.png</button>
+  </div>
+
+  <div style="padding:10px 12px; font-size:12px; opacity:0.9;">
+    もし404が残る場合：URL末尾に <b>?v=99</b> を付けて開いてください。<br>
+    例：<b>https://ryoadvisor-ui.github.io/-nenga-ar/?v=99</b>
+  </div>
+</div>
+
+<script>
+  const pageEl = document.getElementById('page');
+  const imgurlEl = document.getElementById('imgurl');
+  const statusEl = document.getElementById('status');
+  const img = document.getElementById('img');
+
+  function setStatus(s){ statusEl.textContent = 'status: ' + s; }
+  function setImgUrl(u){ imgurlEl.textContent = 'img: ' + u; }
+
+  pageEl.textContent = 'page: ' + location.href;
+  setImgUrl(img.getAttribute('src'));
+
+  img.addEventListener('load', () => setStatus('OK (loaded)'));
+  img.addEventListener('error', () => setStatus('NG (not found / blocked)'));
+
+  function setSrc(path) {
+    // キャッシュ回避のため毎回ユニーク値を付与
+    const v = Date.now();
+    const u = path.includes('?') ? (path + '&v=' + v) : (path + '?v=' + v);
+    img.src = u;
+    setImgUrl(u);
+    setStatus('loading');
+  }
+
+  document.getElementById('reload').onclick = () => location.reload(true);
+  document.getElementById('try1').onclick = () => setSrc('./overlay.png');
+  document.getElementById('try2').onclick = () => setSrc('overlay.png');
+  document.getElementById('try3').onclick = () => setSrc('nenga-ar/overlay.png');
+  document.getElementById('try4').onclick = () => setSrc('./nenga-ar/overlay.png');
+</script>
 </body>
 </html>
