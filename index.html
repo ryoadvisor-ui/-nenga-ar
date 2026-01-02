@@ -12,16 +12,12 @@
     html, body { margin:0; height:100%; overflow:hidden; background:#000; }
     a-scene { position:fixed; inset:0; }
 
-    /* VR/ARボタンをとにかく全殺し（A-Frameの版・端末差吸収） */
-    .a-enter-vr,
-    .a-enter-ar,
-    .a-enter-vr-button,
-    .a-enter-ar-button,
-    .a-enter-xr,
-    .a-enter-xr-button,
-    [class*="enter-vr"],
-    [class*="enter-ar"],
-    [class*="enter-xr"] { display:none !important; visibility:hidden !important; opacity:0 !important; }
+    /* VRボタン全殺し */
+    .a-enter-vr,.a-enter-ar,.a-enter-xr,
+    .a-enter-vr-button,.a-enter-ar-button,.a-enter-xr-button,
+    [class*="enter-vr"],[class*="enter-ar"],[class*="enter-xr"]{
+      display:none !important; visibility:hidden !important; opacity:0 !important;
+    }
 
     #ui{
       position:fixed; inset:0; z-index:9999;
@@ -45,27 +41,13 @@
     }
     #bar{ display:flex; gap:8px; flex-wrap:wrap; }
     #log{
-      width:100%; max-width:360px; height:240px; overflow:auto;
+      width:100%; max-width:360px; height:260px; overflow:auto;
       background:rgba(255,255,255,0.06);
       border:1px solid rgba(255,255,255,0.18);
       border-radius:12px;
       padding:10px;
       font-size:12px; line-height:1.45;
       white-space:pre-wrap; word-break:break-word;
-    }
-    #camPreview {
-      width:100%;
-      max-width:360px;
-      aspect-ratio: 16/9;
-      background:#111;
-      border-radius:12px;
-      overflow:hidden;
-      border:1px solid rgba(255,255,255,0.18);
-      display:none;
-    }
-    #camPreview video{
-      width:100%; height:100%; object-fit:cover;
-      background:#000;
     }
   </style>
 </head>
@@ -81,16 +63,11 @@
     </div>
 
     <div class="box" style="opacity:.9;font-size:13px;">
-      「開始」→ まず<b>カメラ単体プレビュー</b>が映るか確認 → 続けてMindAR起動。<br>
-      黒ならログを貼ってください（UIは黒でも消えません）。
+      「開始」を押しても黒い場合はログを貼ってください。<br>
+      ※GitHub Pagesはキャッシュが強いので URL に <b>?v=数字</b> を付けて開くのが確実。
     </div>
 
     <button id="startBtn" disabled>開始（診断込み）</button>
-
-    <div id="camPreview" class="box">
-      <video id="camTest" playsinline muted webkit-playsinline></video>
-    </div>
-
     <div id="log"></div>
   </div>
 
@@ -102,6 +79,7 @@
     loading-screen="enabled:false"
     renderer="colorManagement:true"
     mindar-image="imageTargetSrc: ./targets.mind; autoStart:false; uiScanning:false; uiLoading:false;">
+
     <a-assets>
       <video id="ov" src="./overlay.mp4" loop muted playsinline webkit-playsinline crossorigin="anonymous"></video>
     </a-assets>
@@ -118,22 +96,15 @@
     const env = document.getElementById('env');
     const modeEl = document.getElementById('mode');
     const log = document.getElementById('log');
-    const startBtn = document.getElementById('startBtn');
+    const btn = document.getElementById('startBtn');
+
     const scene = document.querySelector('a-scene');
-
     const ov = document.getElementById('ov');
-    const camPreview = document.getElementById('camPreview');
-    const camTest = document.getElementById('camTest');
 
-    function now(){
-      const d = new Date();
-      const hh = String(d.getHours()).padStart(2,'0');
-      const mm = String(d.getMinutes()).padStart(2,'0');
-      const ss = String(d.getSeconds()).padStart(2,'0');
-      return `${hh}:${mm}:${ss}`;
-    }
     function add(t){
-      log.textContent += `[${now()}] ${t}\n`;
+      const d=new Date();
+      const ts = String(d.getHours()).padStart(2,'0')+':'+String(d.getMinutes()).padStart(2,'0')+':'+String(d.getSeconds()).padStart(2,'0');
+      log.textContent += `[${ts}] ${t}\n`;
       log.scrollTop = log.scrollHeight;
     }
     function setS(t){ st.textContent = 'state: ' + t; }
@@ -149,13 +120,11 @@
       }catch(_){return false;}
     }
 
-    // VRボタンをDOMから物理的に削除（CSSで消えない個体対策）
     function killVRButtons(){
-      document.querySelectorAll('.a-enter-vr,.a-enter-ar,.a-enter-vr-button,.a-enter-xr,.a-enter-xr-button')
+      document.querySelectorAll('.a-enter-vr,.a-enter-ar,.a-enter-xr,.a-enter-vr-button,.a-enter-ar-button,.a-enter-xr-button')
         .forEach(el => el.remove());
     }
 
-    // catchに入らないものも拾う
     window.addEventListener('error', (ev) => {
       add('[window.error] ' + (ev.message || ev.error));
       if (ev.error && ev.error.stack) add(ev.error.stack);
@@ -169,151 +138,12 @@
       try{
         const r = await fetch('./targets.mind', {cache:'no-store'});
         add('targets.mind: ' + (r.ok ? 'OK' : ('NG ' + r.status)));
-      }catch(e){
-        add('targets.mind: fetch ERROR ' + (e?.message || e));
-      }
+      }catch(e){ add('targets.mind: fetch ERROR ' + (e?.message||e)); }
+
       try{
         const r = await fetch('./overlay.mp4', {cache:'no-store'});
         add('overlay.mp4: ' + (r.ok ? 'OK' : ('NG ' + r.status)));
-      }catch(e){
-        add('overlay.mp4: fetch ERROR ' + (e?.message || e));
-      }
+      }catch(e){ add('overlay.mp4: fetch ERROR ' + (e?.message||e)); }
     }
 
-    // カメラ単体テスト（これが黒ならMindAR以前の問題）
-    async function cameraSelfTest(){
-      add('cameraSelfTest: start');
-      camPreview.style.display = 'block';
-
-      const constraints = {
-        audio: false,
-        video: {
-          facingMode: { ideal: 'environment' },
-          width: { ideal: 1280 },
-          height: { ideal: 720 }
-        }
-      };
-
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
-      camTest.srcObject = stream;
-      await camTest.play();
-      await new Promise(r => setTimeout(r, 600));
-
-      add(`cameraSelfTest: videoWidth=${camTest.videoWidth} videoHeight=${camTest.videoHeight} readyState=${camTest.readyState}`);
-
-      const okFrames = !!camTest.videoWidth;
-      add('cameraSelfTest: ' + (okFrames ? 'OK (frames coming)' : 'WARNING videoWidth=0 (black/blocked)'));
-
-      // ここでは止める（MindAR側で別取得するため）
-      stream.getTracks().forEach(t => t.stop());
-      camTest.srcObject = null;
-      camPreview.style.display = 'none';
-      add('cameraSelfTest: stopped');
-
-      return okFrames;
-    }
-
-    // MindAR start() 解決（system優先）
-    function resolveMindARStarter(){
-      const sys = scene.systems && scene.systems["mindar-image-system"];
-      const comp = scene.components && scene.components["mindar-image"];
-      if (sys && typeof sys.start === 'function') return { mode:'system', start: () => sys.start() };
-      if (comp && typeof comp.start === 'function') return { mode:'component', start: () => comp.start() };
-      return null;
-    }
-
-    // MindARイベント（黒原因の確定に使う）
-    scene.addEventListener('arReady', () => add('EVENT: arReady (camera texture ready)'));
-    scene.addEventListener('arError', (e) => add('EVENT: arError ' + (e?.detail ? JSON.stringify(e.detail) : '')));
-
-    // ---- boot ----
-    window.addEventListener('load', async ()=> {
-      killVRButtons();
-      setInterval(killVRButtons, 500); // しつこい個体対策
-
-      env.textContent = 'env: ' + (inAppUA() ? 'in-app-webview' : 'browser/Other');
-      add('boot...');
-      add('secureContext: ' + window.isSecureContext);
-      add('mediaDevices: ' + !!navigator.mediaDevices);
-      add('getUserMedia: ' + !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia));
-      add('WebGL: ' + (webglOK() ? 'OK' : 'NG'));
-      add('AFRAME: ' + (window.AFRAME ? 'OK' : 'NG'));
-      add('MINDAR: ' + (window.MINDAR ? 'OK' : 'NG'));
-      await fetchCheck();
-
-      scene.addEventListener('loaded', ()=> {
-        add('scene.loaded fired');
-        setS('checking');
-
-        const startedAt = Date.now();
-        const timer = setInterval(()=> {
-          const starter = resolveMindARStarter();
-          if (starter) {
-            clearInterval(timer);
-            add(`mindar: ${starter.mode}.start OK`);
-            modeEl.textContent = 'mode: ' + starter.mode;
-            startBtn.disabled = false;
-            setS('ready');
-            return;
-          }
-          if (Date.now() - startedAt > 8000) {
-            clearInterval(timer);
-            add('mindar: start() not found (timeout)');
-            add('debug: systems keys = ' + Object.keys(scene.systems || {}).join(','));
-            add('debug: components keys = ' + Object.keys(scene.components || {}).join(','));
-            setS('failed');
-          }
-        }, 100);
-      });
-    });
-
-    // ---- start ----
-    startBtn.onclick = async ()=> {
-      try{
-        killVRButtons();
-        setS('starting');
-        add('start tapped');
-
-        // ①カメラ単体で「黒かどうか」判定
-        const cameraOK = await cameraSelfTest();
-        add('cameraSelfTest result: ' + (cameraOK ? 'OK' : 'BLACK'));
-
-        // overlayはユーザー操作で触っておく（iOS対策）
-        try { await ov.play(); add('overlay.play(): OK'); }
-        catch(e){ add('overlay.play(): NG ' + (e?.message||e)); }
-
-        // ②MindAR start
-        const starter = resolveMindARStarter();
-        if (!starter) throw new Error('MindAR start() not ready');
-
-        add('mindar.start() calling...');
-        await starter.start();
-        add('mindar.start(): OK');
-
-        // ここで arReady が来るか観察するため UIは消さない（黒ならログ取得優先）
-        add('NOTE: UI stays for diagnosis. If camera view is OK, you can hide UI manually later.');
-
-        // 「本運用」では arReady を待って UI を消すのが安全
-        let readyFired = false;
-        const onReady = () => { readyFired = true; };
-        scene.addEventListener('arReady', onReady, { once:true });
-
-        setTimeout(()=>{
-          if (!readyFired) {
-            add('WARNING: arReady not fired within 3s (likely black camera texture on A-Frame/MindAR)');
-          } else {
-            add('OK: arReady fired (you can hide UI for production)');
-          }
-        }, 3000);
-
-        setS('running');
-
-      }catch(e){
-        add('ERROR: ' + (e?.message || e));
-        if (e?.stack) add(e.stack);
-        setS('failed');
-      }
-    };
-  </script>
-</body>
-</html>
+    // ★ ここが肝：ど
