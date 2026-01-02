@@ -96,9 +96,9 @@ const FRAME_H = 600;
    - OFFSET_X_QR  : QR左上から右へ(+) / 左へ(-)
    - OFFSET_Y_QR  : QR左上から下へ(+) / 上へ(-)
    ========================== */
-const OVERLAY_W_QR = 4.00;
+const OVERLAY_W_QR = 4.10;
 const OFFSET_X_QR  = 0.00;
-const OFFSET_Y_QR  = -4.50;
+const OFFSET_Y_QR  = -4.60;
 
 /* overlay高さは、フレーム比率から自動で決める（404×600） */
 const OVERLAY_H_QR = OVERLAY_W_QR * (FRAME_H / FRAME_W);
@@ -332,4 +332,5 @@ document.getElementById('start').addEventListener('click', start, { passive:true
 
 </body>
 </html>
+
 
